@@ -1,9 +1,6 @@
 .env
 .venv/
 node_modules/
-
-# Rotating Slack tokens written by the installation store
-.slack-installations/
 dist/
 *.log
 .DS_Store

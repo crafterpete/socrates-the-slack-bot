@@ -15,6 +15,8 @@ Project planning
     - Injection guardrails
 - v5: react loops + reflection loops
 - v6: live human feedback + data set expansion/updates 
+    - Humans can reply thumbs up and thumbs down
+    - Output gets saved in a database
 - v7 (subject to change): llm as a judge for evals
     - deterministic checks stay handrolled (retrieval recall@k/precision@k/MRR; answer exact/numeric/set/boolean/abstain markers) --> no API, reproducible, runs every pass
     - offload judge checks to this stage (free-form summaries, faithfulness/groundedness, trajectory) --> lean on openevals + agentevals instead of handrolling judge prompts + parsers

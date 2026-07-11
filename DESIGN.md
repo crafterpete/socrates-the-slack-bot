@@ -4,8 +4,8 @@ Ongoing design Log
 ## V1: Initial Slack Bot + Sql Tooling
 
 ### Slackbot authenticating requests
-- I'm opting to host this slack bot locally, rather than kick it up into a server. As a result, the server will connect to slack via a websocket, using SLACK_APP_TOKEN, and persist the connection. If we wanted to deploy this on the web, we'd instead need to open up a webhook endpoint, and have our server validate this with the slack SIGNING_SECRET. 
-- We're using the slack-bolt framework to manage our SLACK_BOT_TOKEN. That token is rotated every 12 hours. The rotation management and storage occurs in a local directory managed by slack-bolt (.slack-installations/). The initial seed refresh token is obtained via the slack UI and stored locally in a .env file under SLACK_BOT_REFRESH_TOKEN.
+- I'm opting to host this slack bot locally, rather than kick it up into a server. As a result, the server will connect to slack via a websocket, using Socket mode. This allows us to avoid exposing a public HTTP endpoint.
+- We'll maintain the `SLACK_APP_TOKEN`, which is used to open up the websocket (bolt will use it to create the connection) and the `SLACK_BOT_TOKEN` (which scopes the bot's permissions, and used to write events to slack) in our .env file.
 - In a later stage, I'll explore opening up a webhook + will demonstrate what that would look like.
 
 ## v0: EVALS - outlining an initial eval suite to inform performance
@@ -52,6 +52,7 @@ Simple queries (directly queryable with sql filters like WHERE, LIKE)
 
 Semantic queries (Driven on meaning)
     - Queries driven based on meaning (ie: "what are the most common pain points that customers experience?", "give me the most challenging sales calls we've had so far"): traditional sql will be inadequate for these queries
+    - Starting out, I expect a lot of semantic queries to fail with purely sql tooling (or a lot of extraneous queries / context bloat).
 
 Complex queries: 
     - Multi-step queries: Questions that will require multiple sql searches ("Out of all customers > 500 employees based in California, could you summarize the conversations we've had with each one over the past three weeks where there was obvious FUD?")

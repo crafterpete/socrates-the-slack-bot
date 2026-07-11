@@ -1,11 +1,8 @@
 import { createSlackApp } from "./slack/app.js";
-import { ensureInstallation } from "./slack/seed-installation.js";
 import { env } from "./config/env.js";
 
 async function main(): Promise<void> {
   console.log(`Database ready: ${env.databasePath}`);
-
-  await ensureInstallation();
 
   const app = createSlackApp();
   await app.start();
