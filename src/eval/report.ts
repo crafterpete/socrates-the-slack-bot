@@ -19,6 +19,7 @@ export function printReport(results: EvalResult[]): void {
     recall: r.retrievalScore?.scored ? pct(r.retrievalScore.recall) : "-",
     prec: r.retrievalScore?.scored ? pct(r.retrievalScore.precision) : "-",
     mrr: r.retrievalScore?.scored ? r.retrievalScore.mrr.toFixed(2) : "-",
+    calls: String(r.toolCalls.length),
   }));
 
   const widths = {
@@ -28,6 +29,7 @@ export function printReport(results: EvalResult[]): void {
     recall: 6,
     prec: 6,
     mrr: 4,
+    calls: 5,
   };
   const pad = (s: string, w: number) => s.padEnd(w);
 
@@ -38,6 +40,7 @@ export function printReport(results: EvalResult[]): void {
     pad("recall", widths.recall),
     pad("prec", widths.prec),
     pad("mrr", widths.mrr),
+    pad("calls", widths.calls),
   ].join("  ");
 
   console.log("");
@@ -52,6 +55,7 @@ export function printReport(results: EvalResult[]): void {
         pad(r.recall, widths.recall),
         pad(r.prec, widths.prec),
         pad(r.mrr, widths.mrr),
+        pad(r.calls, widths.calls),
       ].join("  "),
     );
   }
@@ -61,6 +65,9 @@ export function printReport(results: EvalResult[]): void {
   const retrieval = results.filter((r) => r.retrievalScore?.scored);
   const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 1);
 
+  const avgCalls = mean(results.map((r) => r.toolCalls.length));
+  const maxCalls = Math.max(...results.map((r) => r.toolCalls.length));
+
   console.log("");
   console.log(
     `answer:    ${passed}/${graded.length} deterministic pass` +
@@ -68,6 +75,7 @@ export function printReport(results: EvalResult[]): void {
         ? `  (${results.length - graded.length} deferred to judge/manual)`
         : ""),
   );
+  console.log(`tool calls: avg ${avgCalls.toFixed(1)}  max ${maxCalls}`);
   if (retrieval.length) {
     console.log(
       `retrieval: recall ${pct(mean(retrieval.map((r) => r.retrievalScore!.recall)))}  ` +

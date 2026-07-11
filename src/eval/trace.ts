@@ -19,20 +19,18 @@ const ID_FIELD_TO_ENTITY: Record<string, EntityType> = {
 export class RetrievalCaptureHandler extends BaseCallbackHandler {
   name = "retrieval_capture";
   toolCalls: ToolCall[] = [];
-  private names = new Map<string, string>();
+  private pending = new Map<string, { name: string; input: string }>();
 
   handleToolStart(
-    tool: { name?: string; id?: string[] } | undefined,
-    _input: string,
+    _tool: unknown,
+    input: string,
     runId: string,
     _parentRunId?: string,
     _tags?: string[],
     _metadata?: Record<string, unknown>,
-    _runName?: string,
-    name?: string,
+    runName?: string,
   ): void {
-    const toolName = name ?? tool?.name ?? tool?.id?.at(-1) ?? "unknown";
-    this.names.set(runId, toolName);
+    this.pending.set(runId, { name: runName ?? "unknown", input });
   }
 
   handleToolEnd(output: unknown, runId: string): void {
@@ -42,7 +40,8 @@ export class RetrievalCaptureHandler extends BaseCallbackHandler {
         : typeof (output as { content?: unknown })?.content === "string"
           ? ((output as { content: string }).content)
           : JSON.stringify(output ?? "");
-    this.toolCalls.push({ name: this.names.get(runId) ?? "unknown", output: text });
+    const call = this.pending.get(runId);
+    this.toolCalls.push({ name: call?.name ?? "unknown", input: call?.input ?? "", output: text });
   }
 }
 

@@ -61,9 +61,12 @@ async function main(): Promise<void> {
       id: rec.id,
       question: rec.question,
       answer,
+      expected: rec.answer,
       answerScore: args.onlyRetrieval ? null : scoreAnswer(rec, answer),
       retrievalScore: args.onlyAnswer ? null : scoreRetrieval(rec.relevant_ids, predicted),
+      expectedIds: rec.relevant_ids,
       predicted,
+      toolCallCount: handler.toolCalls.length,
       toolCalls: handler.toolCalls,
     });
     process.stdout.write(".");

@@ -75,6 +75,7 @@ export interface GoldenRecord {
 
 export interface ToolCall {
   name: string;
+  input: string;
   output: string;
 }
 
@@ -103,8 +104,11 @@ export interface EvalResult {
   id: string;
   question: string;
   answer: string;
+  expected: string | null;
   answerScore: AnswerScore | null;
   retrievalScore: RetrievalScore | null;
+  expectedIds: GroupedIds;
   predicted: GroupedIds;
+  toolCallCount: number;
   toolCalls: ToolCall[];
 }
