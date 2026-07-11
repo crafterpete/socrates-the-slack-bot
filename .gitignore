@@ -1,0 +1,14 @@
+.env
+.venv/
+node_modules/
+
+# Rotating Slack tokens written by the installation store
+.slack-installations/
+dist/
+*.log
+.DS_Store
+resources/
+
+# SQLite transient sidecar files (regenerated on open)
+*.sqlite-shm
+*.sqlite-wal
