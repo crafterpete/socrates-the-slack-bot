@@ -66,7 +66,11 @@ BM25, vector search, SQL, or a compound tool.
 
 Every case declares one `retrieval_evaluation` mode:
 
-- `required`: score `relevant_ids` with recall, precision, and MRR.
+- `required`: score `relevant_ids` with recall and precision. MRR is also scored, but only when
+  `retrieval.modality` is `lexical`, `semantic`, or `hybrid` — the predicted-ids order only
+  reflects a real relevance ranking (BM25's `ORDER BY rank`) for those; a `structured`-only case's
+  predicted-ids order is just incidental tool-call/row order, not a ranking signal, so MRR is
+  `null` (not applicable) rather than a fabricated score.
 - `not_applicable`: excluded from retrieval metrics. The answer can be computed without the
   final tool output exposing specific row IDs (e.g. a plain `COUNT(*)`).
 - `trajectory_only`: not scored on recall/MRR now, but reserved for a future check of whether
@@ -153,8 +157,9 @@ every case has a clear purpose and every failure is interpretable, not the large
 
 - Target 40-45 core cases; hard cap under 50 (49 max) — the build throws at 50+ and warns above 45.
 - `canonical_sample` and locked `semantic_stress` cases always count toward the cap.
-- Current: 45 core (25 `core_deterministic`, 8 `adversarial`, 7 `canonical_sample`,
-  5 `semantic_stress`) + 14 in the challenge bank.
+- Current: 49 core (29 `core_deterministic`, 8 `adversarial`, 7 `canonical_sample`,
+  5 `semantic_stress`) + 14 in the challenge bank. At the 49-case hard-cap ceiling; promoting
+  another case requires demoting or retiring one first.
 
 ### Admission rule
 
@@ -401,6 +406,21 @@ derived from this plus `challenge.answerability` (`src/eval/taxonomy-rules.ts`),
 an explicit tolerance), `boolean→boolean`, `set→set_equality`, `ranked_list→ranked_list`,
 `free_text`+answerable`→judge`; any shape + `unanswerable`→`abstain`; any shape +
 `out_of_scope|disallowed`→`refuse`.
+
+### `diagnostics`
+
+Optional, non-authoritative metadata. None of these fields affect scoring or `validateCase`
+(except that `data_quality=dirty_enum` requires a `validationNote` to exist, see above); they
+exist to make a case's *purpose* legible to a human reading the dataset or the report UI.
+
+- `validationNote` — free-text prose explaining a structural exception the validator can't infer
+  on its own (a documented `relevant_ids` entity exception, a messy `dirty_enum` field, etc.).
+- `baselineHypothesis` — per-retrieval-strategy pass/fail prediction, `semantic_stress` cases only.
+- `tags` — short kebab/snake_case labels for grouping/filtering cases by what capability they
+  stress (e.g. `join_stress`, `cross_table_enrichment`, `complex_math`), surfaced in the report UI.
+  Freeform and additive: unlike the rest of the taxonomy, there's no fixed enum and no requirement
+  to tag every case, add them where they make a case easier to find or explain, skip them
+  otherwise.
 
 ## Builder pattern
 
