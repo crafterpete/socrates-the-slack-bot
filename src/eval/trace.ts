@@ -1,21 +1,6 @@
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { EntityType, GroupedIds, ToolCall } from "./types.js";
 
-// Maps a row's *_id column to the entity_type it belongs to. This is the seam that
-// makes retrieval scoring independent of tool design. Today the tools return JSON
-// strings, so we infer ids from column names below. Once tools return structured
-// { [entity_type]: { ids, text } }, delete extractRetrieval and read that directly.
-const ID_FIELD_TO_ENTITY: Record<string, EntityType> = {
-  artifact_id: "artifacts",
-  customer_id: "customers",
-  competitor_id: "competitors",
-  product_id: "products",
-  employee_id: "employees",
-  implementation_id: "implementations",
-  scenario_id: "scenarios",
-  company_id: "company_profile",
-};
-
 export class RetrievalCaptureHandler extends BaseCallbackHandler {
   name = "retrieval_capture";
   toolCalls: ToolCall[] = [];
@@ -56,21 +41,20 @@ export function extractRetrieval(toolCalls: ToolCall[]): GroupedIds {
     } catch {
       continue;
     }
-    const rows = Array.isArray(parsed) ? parsed : [parsed];
-    for (const row of rows) {
-      if (!row || typeof row !== "object") continue;
-      for (const [key, value] of Object.entries(row as Record<string, unknown>)) {
-        const entity = ID_FIELD_TO_ENTITY[key];
-        if (!entity || typeof value !== "string") continue;
-        let set = seen.get(entity);
-        if (!set) {
-          set = new Set();
-          seen.set(entity, set);
-          grouped[entity] = [];
-        }
-        if (set.has(value)) continue;
+    const ids = (parsed as { ids?: Record<string, string[]> } | null)?.ids;
+    if (!ids || typeof ids !== "object") continue;
+    for (const [entity, values] of Object.entries(ids)) {
+      if (!Array.isArray(values)) continue;
+      let set = seen.get(entity as EntityType);
+      if (!set) {
+        set = new Set();
+        seen.set(entity as EntityType, set);
+        grouped[entity as EntityType] = [];
+      }
+      for (const value of values) {
+        if (typeof value !== "string" || set.has(value)) continue;
         set.add(value);
-        grouped[entity]!.push(value);
+        grouped[entity as EntityType]!.push(value);
       }
     }
   }

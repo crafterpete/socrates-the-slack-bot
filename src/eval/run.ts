@@ -2,7 +2,9 @@ import { askAgent, createQaAgent } from "../agent/index.js";
 import { applyFilters, loadDataset } from "./dataset.js";
 import { printReport, writeReport } from "./report.js";
 import { scoreAnswer, scoreRetrieval } from "./score.js";
+import type { ChatMessage } from "../shared/chat.js";
 import { extractRetrieval, RetrievalCaptureHandler } from "./trace.js";
+import { DEFAULT_SUITE } from "./types.js";
 import type { EvalResult, GoldenRecord } from "./types.js";
 
 interface CliArgs {
@@ -29,7 +31,7 @@ function parseArgs(argv: string[]): CliArgs {
   return args;
 }
 
-function buildMessages(rec: GoldenRecord): Array<{ role: "user" | "assistant"; content: string }> {
+function buildMessages(rec: GoldenRecord): ChatMessage[] {
   if (rec.messages?.length) return rec.messages;
   return [{ role: "user", content: rec.question }];
 }
@@ -59,11 +61,12 @@ async function main(): Promise<void> {
     const predicted = extractRetrieval(handler.toolCalls);
     // retrieval_evaluation gates scoring explicitly (required only); not_applicable and
     // trajectory_only are never scored on recall/precision/MRR, regardless of whether
-    // relevant_ids happens to be empty.
+    // relevant_ids happens to be empty. modality defaults to "none" (no MRR) if a record is
+    // somehow missing its tuples.jsonl dims — never fabricate a ranked score without knowing.
     const retrievalScore =
       args.onlyAnswer || rec.retrieval_evaluation !== "required"
         ? null
-        : scoreRetrieval(rec.relevant_ids, predicted);
+        : scoreRetrieval(rec.relevant_ids, predicted, rec.dims?.retrieval.modality ?? "none");
     results.push({
       id: rec.id,
       question: rec.question,
@@ -79,7 +82,7 @@ async function main(): Promise<void> {
     process.stdout.write(".");
   }
 
-  const suiteById = new Map(records.map((rec) => [rec.id, rec.dims?.provenance.suite ?? "core_deterministic"]));
+  const suiteById = new Map(records.map((rec) => [rec.id, rec.dims?.provenance.suite ?? DEFAULT_SUITE]));
   printReport(results, suiteById);
   const out = writeReport(results);
   console.log(`Wrote ${out}`);

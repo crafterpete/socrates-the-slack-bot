@@ -2,6 +2,8 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../config/env.js";
 import { loadDataset } from "./dataset.js";
+import { REPORT_FILENAME } from "./paths.js";
+import { DEFAULT_SUITE, SUITE_ORDER } from "./types.js";
 import type { EvalResult } from "./types.js";
 
 // Turns eval-report.json into one self-contained HTML file: a sortable/filterable triage table
@@ -9,17 +11,18 @@ import type { EvalResult } from "./types.js";
 // reading panes, retrieval id breakdown, and tool-call trace. No dependencies, no server — open
 // the file directly in a browser.
 
-const inPath = path.resolve(env.projectRoot, process.argv[2] ?? "eval-report.json");
+const inPath = path.resolve(env.projectRoot, process.argv[2] ?? REPORT_FILENAME);
 const results: EvalResult[] = JSON.parse(readFileSync(inPath, "utf8"));
 
 // Reports written before EvalResult carried `expected`/`expectedIds` lack the gold answer and
 // relevant ids; join them back in from the golden dataset by id so the UI can show them without
-// re-running the eval. Also join `suite` (from tuples.jsonl) for suite-segmented display,
-// mirroring the console report's per-suite breakdown.
+// re-running the eval. Also join `suite` and `tags` (from tuples.jsonl) for suite-segmented
+// display and tag-based browsing, mirroring the console report's per-suite breakdown.
 const goldById = new Map(loadDataset().map((rec) => [rec.id, rec]));
 const withSuite = results.map((r) => ({
   ...r,
-  suite: goldById.get(r.id)?.dims?.provenance.suite ?? "core_deterministic",
+  suite: goldById.get(r.id)?.dims?.provenance.suite ?? DEFAULT_SUITE,
+  tags: goldById.get(r.id)?.dims?.diagnostics?.tags ?? [],
   expected: r.expected ?? goldById.get(r.id)?.answer ?? null,
   expectedIds: r.expectedIds ?? goldById.get(r.id)?.relevant_ids ?? {},
 }));
@@ -30,6 +33,7 @@ const withSuite = results.map((r) => ({
 const rows = withSuite.map((r) => ({
   id: r.id,
   suite: r.suite,
+  tags: r.tags,
   correct: r.answerScore ? r.answerScore.correct : undefined,
   match: r.answerScore?.match_type ?? "-",
   detail: r.answerScore?.detail ?? null,
@@ -142,6 +146,9 @@ const html = `<!doctype html>
   .pill.pass::before, .pill.fail::before, .pill.judge::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .chip-suite { font-size: 11px; color: var(--ink-soft); background: var(--panel); border: 1px solid var(--border); padding: 2px 8px; border-radius: 6px; font-family: var(--mono); }
   .match { font-size: 11.5px; color: var(--ink-soft); font-family: var(--mono); }
+  .tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+  .tags.row-tags { margin-top: 3px; }
+  .chip-tag { font-size: 11px; color: var(--accent); background: var(--accent-soft); border: 1px solid transparent; padding: 2px 8px; border-radius: 6px; font-family: var(--mono); }
 
   /* mini meter */
   .meter { display: flex; align-items: center; gap: 7px; }
@@ -302,6 +309,11 @@ function meter(n) {
   return '<span class="meter"><span class="track ' + meterCls(n) + '"><i style="width:' + Math.round(n * 100) + '%"></i></span><span class="v">' + pct(n) + '</span></span>';
 }
 
+function tagChips(tags) {
+  if (!tags || !tags.length) return "";
+  return '<div class="tags">' + tags.map((t) => '<span class="chip-tag">' + esc(t) + '</span>').join("") + '</div>';
+}
+
 // Renders grouped ids, comparing against the other side per entity_type (matching scoreRetrieval).
 // mode "expected": gold ids, green if retrieved (hit) else red (miss).
 // mode "retrieved": predicted ids, green if relevant (hit) else amber (false positive).
@@ -347,7 +359,7 @@ function detailHtml(r) {
   const scorer = r.detail ? '<span class="scorer-detail">' + esc(r.detail) + '</span>' : "";
   const v = verdictOf(r);
   return '<div class="detail">' +
-    '<div class="qlead"><span class="lbl-eyebrow">Question</span><div class="qtext">' + esc(r.question) + '</div></div>' +
+    '<div class="qlead"><span class="lbl-eyebrow">Question</span><div class="qtext">' + esc(r.question) + '</div>' + tagChips(r.tags) + '</div>' +
     '<div class="aecols">' +
       '<div class="pane answer"><div class="head"><span>Model answer</span><span class="pill ' + v.k + '">' + v.label + '</span></div><div class="body">' + md(r.answer) + '</div></div>' +
       '<div class="pane expected"><div class="head"><span>Expected</span><span class="match">' + esc(r.match) + '</span></div><div class="body">' + (r.expected == null ? '<span class="dash">— no gold answer —</span>' : md(r.expected)) + '</div></div>' +
@@ -366,7 +378,11 @@ function filtered() {
   const rows = DATA.filter((r) => {
     if (state.verdict && verdictOf(r).k !== state.verdict) return false;
     if (state.suite && r.suite !== state.suite) return false;
-    if (state.q) { const q = state.q.toLowerCase(); if (!r.id.toLowerCase().includes(q) && !r.question.toLowerCase().includes(q)) return false; }
+    if (state.q) {
+      const q = state.q.toLowerCase();
+      const tagHit = (r.tags || []).some((t) => t.toLowerCase().includes(q));
+      if (!r.id.toLowerCase().includes(q) && !r.question.toLowerCase().includes(q) && !tagHit) return false;
+    }
     return true;
   });
   const k = state.sortKey;
@@ -406,7 +422,7 @@ function renderConsole(rows) {
       '<td><span class="chip-suite">' + esc(r.suite.replace(/_/g, " ")) + '</span></td>' +
       '<td><span class="pill ' + v.k + '">' + v.label + '</span></td>' +
       '<td><span class="match">' + esc(r.match) + '</span></td>' +
-      '<td class="c-q"><div class="qt">' + esc(r.question) + '</div></td>' +
+      '<td class="c-q"><div class="qt">' + esc(r.question) + '</div>' + (r.tags && r.tags.length ? '<div class="tags row-tags">' + r.tags.map((t) => '<span class="chip-tag">' + esc(t) + '</span>').join("") + '</div>' : "") + '</td>' +
       '<td>' + meter(r.recall) + '</td>' +
       '<td>' + meter(r.precision) + '</td>' +
       '<td class="num">' + (r.mrr == null ? '<span class="dash">—</span>' : r.mrr.toFixed(2)) + '</td>' +
@@ -423,7 +439,8 @@ function renderCards(rows) {
   return '<div class="cards">' + rows.map((r) => {
     const v = verdictOf(r);
     const mini = (r.recall == null ? "" :
-      '<span class="m">recall <b>' + pct(r.recall) + '</b></span><span class="m">prec <b>' + pct(r.precision) + '</b></span><span class="m">mrr <b>' + r.mrr.toFixed(2) + '</b></span>') +
+      '<span class="m">recall <b>' + pct(r.recall) + '</b></span><span class="m">prec <b>' + pct(r.precision) + '</b></span>' +
+      (r.mrr == null ? "" : '<span class="m">mrr <b>' + r.mrr.toFixed(2) + '</b></span>')) +
       '<span class="m">tools <b>' + r.toolCallCount + '</b></span>';
     return '<div class="card">' +
       '<div class="chead"><span class="pill ' + v.k + '">' + v.label + '</span><span class="cid">' + esc(r.id) + '</span>' +
@@ -458,14 +475,15 @@ function renderSummary() {
   document.getElementById("meta").textContent = DATA.length + " cases · " + (DATA.length - graded.length) + " judge/deferred";
 
   const scored = DATA.filter((r) => r.recall != null);
+  const mrrScored = scored.filter((r) => r.mrr != null);
   document.getElementById("retrievalbig").innerHTML = scored.length ?
     '<div class="m"><span class="mv">' + pct(mean(scored.map((r) => r.recall))) + '</span><span class="mk">recall</span></div>' +
     '<div class="m"><span class="mv">' + pct(mean(scored.map((r) => r.precision))) + '</span><span class="mk">precision</span></div>' +
-    '<div class="m"><span class="mv">' + mean(scored.map((r) => r.mrr)).toFixed(2) + '</span><span class="mk">mrr</span></div>' +
+    '<div class="m"><span class="mv">' + (mrrScored.length ? mean(mrrScored.map((r) => r.mrr)).toFixed(2) : "—") + '</span><span class="mk">mrr</span></div>' +
     '<span class="scored">' + scored.length + ' scored</span>'
     : '<span class="scored">none scored</span>';
 
-  const suiteOrder = ["core_deterministic", "adversarial", "canonical_sample", "semantic_stress", "regression"];
+  const suiteOrder = ${JSON.stringify(SUITE_ORDER)};
   const suites = [...new Set(DATA.map((r) => r.suite))].sort((a, b) => {
     const ai = suiteOrder.indexOf(a), bi = suiteOrder.indexOf(b);
     return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);

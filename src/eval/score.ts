@@ -1,10 +1,18 @@
+import { ABSTAIN_MARKER, REFUSE_MARKER } from "../shared/markers.js";
 import type {
   AnswerScore,
   EntityType,
   GoldenRecord,
   GroupedIds,
+  RetrievalModality,
   RetrievalScore,
 } from "./types.js";
+
+// MRR measures rank of the first correct id within the predicted-ids array. That array order is
+// only a meaningful signal when it reflects an actual relevance ranking (search_artifacts' BM25
+// ORDER BY rank); for structured-only cases it's just incidental tool-call/row order, so MRR is
+// scored only for the modalities where retrieval is genuinely ranked.
+const RANKED_MODALITIES = new Set<RetrievalModality>(["lexical", "semantic", "hybrid"]);
 
 const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
 
@@ -75,9 +83,9 @@ export function scoreAnswer(rec: GoldenRecord, response: string): AnswerScore {
     // table ("Response begins with [Abstain]"/"[Refuse]"). Separate match types so the two
     // behaviors (in-scope-but-unsupported vs out-of-scope-or-disallowed) report independently.
     case "abstain":
-      return mk(resp.startsWith(norm("[Abstain]")), "expected leading [Abstain]");
+      return mk(resp.startsWith(norm(ABSTAIN_MARKER)), `expected leading ${ABSTAIN_MARKER}`);
     case "refuse":
-      return mk(resp.startsWith(norm("[Refuse]")), "expected leading [Refuse]");
+      return mk(resp.startsWith(norm(REFUSE_MARKER)), `expected leading ${REFUSE_MARKER}`);
     case "exact_scalar":
       return mk(resp.includes(norm(rec.answer)));
     case "set_equality": {
@@ -106,8 +114,10 @@ export function scoreAnswer(rec: GoldenRecord, response: string): AnswerScore {
 // Retrieval eval. Compares predicted ids to relevant_ids per entity_type, then rolls up.
 // The caller (run.ts) only invokes this when retrieval_evaluation="required"; not_applicable
 // and trajectory_only cases are excluded from retrieval metrics upstream, not inferred here
-// from id emptiness.
-export function scoreRetrieval(gold: GroupedIds, pred: GroupedIds): RetrievalScore {
+// from id emptiness. `modality` gates MRR: only scored for ranked retrieval (see
+// RANKED_MODALITIES above); structured-only cases get mrr=null, not a fabricated 1.0.
+export function scoreRetrieval(gold: GroupedIds, pred: GroupedIds, modality: RetrievalModality): RetrievalScore {
+  const ranked = RANKED_MODALITIES.has(modality);
   const entities = new Set<EntityType>([
     ...(Object.keys(gold) as EntityType[]),
     ...(Object.keys(pred) as EntityType[]),
@@ -137,7 +147,7 @@ export function scoreRetrieval(gold: GroupedIds, pred: GroupedIds): RetrievalSco
       precision: p.length ? correct.size / new Set(p).size : g.length === 0 ? 1 : 0,
     };
 
-    if (g.length) {
+    if (ranked && g.length) {
       const rank = p.findIndex((id) => gset.has(id));
       mrrSum += rank >= 0 ? 1 / (rank + 1) : 0;
       mrrCount += 1;
@@ -148,7 +158,7 @@ export function scoreRetrieval(gold: GroupedIds, pred: GroupedIds): RetrievalSco
     scored: totalGold > 0,
     recall: totalGold ? totalCorrect / totalGold : 1,
     precision: totalPred ? totalCorrect / totalPred : 1,
-    mrr: mrrCount ? mrrSum / mrrCount : 1,
+    mrr: ranked ? (mrrCount ? mrrSum / mrrCount : 1) : null,
     perEntity,
   };
 }

@@ -1,12 +1,7 @@
-export type EntityType =
-  | "artifacts"
-  | "customers"
-  | "competitors"
-  | "products"
-  | "employees"
-  | "implementations"
-  | "scenarios"
-  | "company_profile";
+import type { EntityName } from "../db/query-builder.js";
+import type { ChatMessage } from "../shared/chat.js";
+
+export type EntityType = EntityName;
 
 export type GroupedIds = Partial<Record<EntityType, string[]>>;
 
@@ -26,12 +21,17 @@ export type MatchType =
 // tuples.jsonl. Every group is a conceptually separate axis; do not collapse them back into one
 // overloaded field.
 
-export type ProvenanceSuite =
-  | "core_deterministic"
-  | "canonical_sample"
-  | "semantic_stress"
-  | "adversarial"
-  | "regression";
+// Single source of truth for the suites and their display/sort order. Consumers (console report,
+// HTML report, builder partitioning) must not re-list these.
+export const SUITE_ORDER = [
+  "core_deterministic",
+  "adversarial",
+  "canonical_sample",
+  "semantic_stress",
+  "regression",
+] as const;
+export type ProvenanceSuite = (typeof SUITE_ORDER)[number];
+export const DEFAULT_SUITE: ProvenanceSuite = SUITE_ORDER[0];
 export type ProvenanceOrigin =
   | "human_requirement"
   | "human_authored"
@@ -152,6 +152,7 @@ export interface CaseSpec {
   diagnostics?: {
     baselineHypothesis?: BaselineHypothesis;
     validationNote?: string;
+    tags?: string[];
   };
 }
 
@@ -200,6 +201,7 @@ export interface CaseTuple {
   diagnostics?: {
     baseline_hypothesis?: BaselineHypothesis;
     validation_note?: string;
+    tags?: string[];
   };
 }
 
@@ -212,7 +214,7 @@ export interface GoldenRecord {
   retrieval_evaluation: RetrievalEvaluation;
   relevant_ids: GroupedIds;
   tolerance?: { absolute?: number; percent?: number };
-  messages?: Array<{ role: "user" | "assistant"; content: string }>;
+  messages?: ChatMessage[];
   rationale?: string;
   dims?: CaseTuple;
 }
@@ -240,7 +242,9 @@ export interface RetrievalScore {
   scored: boolean;
   recall: number;
   precision: number;
-  mrr: number;
+  // null when the case's retrieval.modality isn't ranked (structured-only lookups have no
+  // meaningful row order to score rank against); only lexical/semantic/hybrid cases get a number.
+  mrr: number | null;
   perEntity: Record<string, PerEntityRetrieval>;
 }
 

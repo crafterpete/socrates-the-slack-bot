@@ -1,6 +1,8 @@
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../config/env.js";
+import { REPORT_FILENAME } from "./paths.js";
+import { DEFAULT_SUITE, SUITE_ORDER } from "./types.js";
 import type { EvalResult, ProvenanceSuite } from "./types.js";
 
 const pct = (n: number): string => `${(n * 100).toFixed(0)}%`;
@@ -12,8 +14,6 @@ function answerMark(result: EvalResult): string {
   return result.answerScore.correct ? "pass" : "FAIL";
 }
 
-const SUITE_ORDER: ProvenanceSuite[] = ["core_deterministic", "adversarial", "canonical_sample", "semantic_stress", "regression"];
-
 function printSuiteTable(label: string, results: EvalResult[]): void {
   if (!results.length) return;
   const rows = results.map((r) => ({
@@ -22,7 +22,7 @@ function printSuiteTable(label: string, results: EvalResult[]): void {
     ans: answerMark(r),
     recall: r.retrievalScore?.scored ? pct(r.retrievalScore.recall) : "-",
     prec: r.retrievalScore?.scored ? pct(r.retrievalScore.precision) : "-",
-    mrr: r.retrievalScore?.scored ? r.retrievalScore.mrr.toFixed(2) : "-",
+    mrr: r.retrievalScore?.scored && r.retrievalScore.mrr != null ? r.retrievalScore.mrr.toFixed(2) : "-",
     calls: String(r.toolCalls.length),
   }));
   const widths = {
@@ -55,11 +55,12 @@ function printSummaryLine(results: EvalResult[]): void {
   );
   console.log(`  tool calls: avg ${avgCalls.toFixed(1)}  max ${maxCalls}`);
   if (retrieval.length) {
+    const mrrVals = retrieval.map((r) => r.retrievalScore!.mrr).filter((v): v is number => v != null);
     console.log(
       `  retrieval: recall ${pct(mean(retrieval.map((r) => r.retrievalScore!.recall)))}  ` +
         `precision ${pct(mean(retrieval.map((r) => r.retrievalScore!.precision)))}  ` +
-        `mrr ${mean(retrieval.map((r) => r.retrievalScore!.mrr)).toFixed(2)}  ` +
-        `(${retrieval.length} scored)`,
+        `mrr ${mrrVals.length ? mean(mrrVals).toFixed(2) : "-"}  ` +
+        `(${retrieval.length} scored, ${mrrVals.length} ranked)`,
     );
   }
 }
@@ -69,7 +70,7 @@ function printSummaryLine(results: EvalResult[]): void {
 export function printReport(results: EvalResult[], suiteById: Map<string, ProvenanceSuite | string>): void {
   const bySuite = new Map<string, EvalResult[]>();
   for (const r of results) {
-    const suite = suiteById.get(r.id) ?? "core_deterministic";
+    const suite = suiteById.get(r.id) ?? DEFAULT_SUITE;
     (bySuite.get(suite) ?? bySuite.set(suite, []).get(suite)!).push(r);
   }
 
@@ -87,7 +88,7 @@ export function printReport(results: EvalResult[], suiteById: Map<string, Proven
 }
 
 export function writeReport(results: EvalResult[]): string {
-  const out = path.resolve(env.projectRoot, "eval-report.json");
+  const out = path.resolve(env.projectRoot, REPORT_FILENAME);
   writeFileSync(out, JSON.stringify(results, null, 2));
   return out;
 }

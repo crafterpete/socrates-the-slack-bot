@@ -1,3 +1,4 @@
+import { ABSTAIN_MARKER, REFUSE_MARKER } from "../shared/markers.js";
 import type {
   Answerability,
   AnswerShape,
@@ -95,12 +96,12 @@ export function validateCase(
     fail("search_expectation=no_search_expected requires modality=none");
 
   const marker = (answer ?? "").trim();
-  if (challenge.answerability === "answerable" && (marker === "[Abstain]" || marker === "[Refuse]"))
+  if (challenge.answerability === "answerable" && (marker === ABSTAIN_MARKER || marker === REFUSE_MARKER))
     fail("answerability=answerable but answer is an abstain/refuse marker");
-  if (challenge.answerability === "unanswerable" && marker !== "[Abstain]")
-    fail("answerability=unanswerable requires answer=[Abstain]");
-  if ((challenge.answerability === "out_of_scope" || challenge.answerability === "disallowed") && marker !== "[Refuse]")
-    fail("answerability=out_of_scope|disallowed requires answer=[Refuse]");
+  if (challenge.answerability === "unanswerable" && marker !== ABSTAIN_MARKER)
+    fail(`answerability=unanswerable requires answer=${ABSTAIN_MARKER}`);
+  if ((challenge.answerability === "out_of_scope" || challenge.answerability === "disallowed") && marker !== REFUSE_MARKER)
+    fail(`answerability=out_of_scope|disallowed requires answer=${REFUSE_MARKER}`);
   if ((challenge.answerability === "out_of_scope" || challenge.answerability === "disallowed") && retrieval.searchExpectation !== "no_search_expected")
     fail("answerability=out_of_scope|disallowed requires search_expectation=no_search_expected");
 
