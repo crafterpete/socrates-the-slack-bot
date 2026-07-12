@@ -61,19 +61,23 @@ export function scoreAnswer(rec: GoldenRecord, response: string): AnswerScore {
     }
     case "numeric_tolerance": {
       const gold = parseNumber(rec.answer);
-      const tol = rec.tolerance ?? 0;
       const nums = extractNumbers(response);
-      return mk(gold !== null && nums.some((n) => Math.abs(n - gold) <= tol));
+      if (gold === null) return mk(false, "gold answer not numeric");
+      const tol = rec.tolerance?.absolute ?? (rec.tolerance?.percent != null ? gold * (rec.tolerance.percent / 100) : 0);
+      return mk(nums.some((n) => Math.abs(n - gold) <= tol));
     }
     case "boolean": {
       const gold = /^(true|yes)$/i.test(rec.answer.trim());
       const polarity = detectPolarity(resp);
       return mk(polarity !== null && polarity === gold, `detected=${polarity}`);
     }
+    // abstain/refuse: the response must begin with the exact marker, per EVALS.md's match_type
+    // table ("Response begins with [Abstain]"/"[Refuse]"). Separate match types so the two
+    // behaviors (in-scope-but-unsupported vs out-of-scope-or-disallowed) report independently.
     case "abstain":
-      // rec.answer holds the expected marker ("[Abstain]" or "[Refuse]"); the agent is
-      // prompted to emit it when it has no grounded answer or must decline.
-      return mk(resp.includes(norm(rec.answer)), `expected marker ${rec.answer}`);
+      return mk(resp.startsWith(norm("[Abstain]")), "expected leading [Abstain]");
+    case "refuse":
+      return mk(resp.startsWith(norm("[Refuse]")), "expected leading [Refuse]");
     case "exact_scalar":
       return mk(resp.includes(norm(rec.answer)));
     case "set_equality": {
@@ -100,8 +104,9 @@ export function scoreAnswer(rec: GoldenRecord, response: string): AnswerScore {
 }
 
 // Retrieval eval. Compares predicted ids to relevant_ids per entity_type, then rolls up.
-// scored = false when there are no relevant ids to grade against (unanswerable/refusal
-// records), so those are excluded from aggregate retrieval metrics.
+// The caller (run.ts) only invokes this when retrieval_evaluation="required"; not_applicable
+// and trajectory_only cases are excluded from retrieval metrics upstream, not inferred here
+// from id emptiness.
 export function scoreRetrieval(gold: GroupedIds, pred: GroupedIds): RetrievalScore {
   const entities = new Set<EntityType>([
     ...(Object.keys(gold) as EntityType[]),

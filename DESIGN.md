@@ -1,4 +1,3 @@
-
 Ongoing design Log
 
 ## V1: Initial Slack Bot + Sql Tooling
@@ -8,8 +7,24 @@ Ongoing design Log
 - We'll maintain the `SLACK_APP_TOKEN`, which is used to open up the websocket (bolt will use it to create the connection) and the `SLACK_BOT_TOKEN` (which scopes the bot's permissions, and used to write events to slack) in our .env file.
 - In a later stage, I'll explore opening up a webhook + will demonstrate what that would look like.
 
-## v0: EVALS - outlining an initial eval suite to inform performance
 
+### SQL tool structure
+Eventually, we'll want our slackbot to choose amongst a collection of tools.
+
+For this V1, we'll focus on SQL search, but I'd like to eventually expand this to include semantic search (via vector db). Plain SQL queries are also a little brute-forcey, and won't have relevance scoring (potentially leading to context bloat) so I'll want to look into BM25 and a more optimized search architecture later too.
+
+It's a big security risk to allow an llm to execute any SQL query that it wants. It's usually best to have specific tools that the agent is allowed to pass parameters into (filter, table name, etc). 
+
+But first, I'm curious about how the agent performs with entirely free-reigns on 
+
+
+
+## v0: EVALS - outlining an initial eval suite to inform performance
+There are a million directions you can take agent building. I want to make sure that I'm not just blindly making shots in the dark during the building process. 
+
+So before I begin, I'd like to first define some ground truth samples. As we iterate this agent, I'll be running these evals, and storing them. This will help me make informed decisions while I incrementally improve this system.
+
+### What evals do we care about? 
 Answer Evals: 
 - End-to-end quality (A|Q)
 - Faithfulness (A|C) - useful for hallucination calculation
@@ -30,7 +45,7 @@ Performance Evals:
 - Which tools did the agent call? In what order? 
 
 Data sets: 
-- Golden set (hand curated by me ~100 query and answer samples)
+- Golden set (hand curated by me ~40 query and answer samples, intended to stress test the system)
 - Adversarial set to test malicious inputs, intended failure
 
 ### Creating the golden set
@@ -71,7 +86,7 @@ Purpose of evals:
     - Some have deterministic criteria (numeric queries, episodic queries, listing specific companies/transcripts with xyz criteria)
     - Some have non-deterministic criteria (summaries, free-form analysis)
     
-    The former can have deterministic answers in our dataset. The latter will require manual human review.
+The former can have deterministic answers in our dataset. The latter will require manual human review.
 
 ### How should I generate the adversarial data set?
 Test against potential failure modes: 

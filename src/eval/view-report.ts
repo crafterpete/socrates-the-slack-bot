@@ -12,13 +12,15 @@ const results: EvalResult[] = JSON.parse(readFileSync(inPath, "utf8"));
 
 // Reports written before EvalResult carried `expected`/`expectedIds` lack the gold answer and
 // relevant ids; join them back in from the golden dataset by id so the UI can show them without
-// re-running the eval.
+// re-running the eval. Also join `suite` (from tuples.jsonl) for suite-segmented display,
+// mirroring the console report's per-suite breakdown.
 const goldById = new Map(loadDataset().map((rec) => [rec.id, rec]));
-for (const r of results) {
-  const gold = goldById.get(r.id);
-  if (r.expected == null) r.expected = gold?.answer ?? null;
-  if (r.expectedIds == null) r.expectedIds = gold?.relevant_ids ?? {};
-}
+const withSuite = results.map((r) => ({
+  ...r,
+  suite: goldById.get(r.id)?.dims?.provenance.suite ?? "core_deterministic",
+  expected: r.expected ?? goldById.get(r.id)?.answer ?? null,
+  expectedIds: r.expectedIds ?? goldById.get(r.id)?.relevant_ids ?? {},
+}));
 
 const html = `<!doctype html>
 <html>
@@ -29,8 +31,7 @@ const html = `<!doctype html>
   :root { color-scheme: light dark; }
   body { font-family: ui-monospace, monospace; font-size: 13px; margin: 24px; max-width: 1100px; }
   h1 { font-size: 16px; }
-  #summary { margin-bottom: 16px; display: flex; gap: 24px; align-items: baseline; flex-wrap: wrap; }
-  #passrate { font-size: 28px; font-weight: bold; }
+  #summary { margin-bottom: 16px; }
   #summary .detail { opacity: 0.85; }
   #controls { margin-bottom: 12px; display: flex; gap: 12px; }
   input, select { font: inherit; padding: 4px 6px; }
@@ -49,6 +50,7 @@ const html = `<!doctype html>
   td.toggle { width: 20px; text-align: center; }
   .toggle-btn { cursor: pointer; opacity: 0.5; user-select: none; }
   .toggle-btn:hover { opacity: 1; }
+  .tools-count { font-weight: bold; margin-bottom: 2px; }
   .tools-full { display: none; font-size: 12px; }
   tr.expanded .tools-full { display: block; }
   tr.expanded .tools-preview { display: none; }
@@ -73,10 +75,14 @@ const html = `<!doctype html>
     <option value="FAIL">FAIL</option>
     <option value="judge">judge</option>
   </select>
+  <select id="suite">
+    <option value="">all suites</option>
+  </select>
 </div>
 <table id="tbl">
   <thead><tr>
     <th data-k="id">id</th>
+    <th data-k="suite">suite</th>
     <th data-k="verdict">ans</th>
     <th data-k="match">match_type</th>
     <th>question</th>
@@ -91,7 +97,7 @@ const html = `<!doctype html>
   <tbody></tbody>
 </table>
 <script>
-const DATA = ${JSON.stringify(results)};
+const DATA = ${JSON.stringify(withSuite)};
 
 function verdictOf(r) {
   if (!r.answerScore) return { label: "-", cls: "" };
@@ -99,11 +105,12 @@ function verdictOf(r) {
   return r.answerScore.correct ? { label: "pass", cls: "pass" } : { label: "FAIL", cls: "fail" };
 }
 const pct = (n) => n == null ? "-" : Math.round(n * 100) + "%";
+const mean = (xs) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 
 const rows = DATA.map((r) => {
   const v = verdictOf(r);
   return {
-    id: r.id, match: r.answerScore?.match_type ?? "-", verdict: v.label, verdictCls: v.cls,
+    id: r.id, suite: r.suite, match: r.answerScore?.match_type ?? "-", verdict: v.label, verdictCls: v.cls,
     recall: r.retrievalScore?.scored ? r.retrievalScore.recall : null,
     precision: r.retrievalScore?.scored ? r.retrievalScore.precision : null,
     mrr: r.retrievalScore?.scored ? r.retrievalScore.mrr : null,
@@ -111,19 +118,26 @@ const rows = DATA.map((r) => {
   };
 });
 
-const graded = rows.filter((r) => r.verdict !== "-" && r.verdict !== "judge");
-const passed = graded.filter((r) => r.verdict === "pass").length;
-const passRate = graded.length ? Math.round((passed / graded.length) * 100) : null;
-const scored = rows.filter((r) => r.recall != null);
-const mean = (xs) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
-const avgCalls = mean(rows.map((r) => r.toolCallCount));
-const maxCalls = Math.max(...rows.map((r) => r.toolCallCount));
+function summaryLine(rs) {
+  const graded = rs.filter((r) => r.verdict !== "-" && r.verdict !== "judge");
+  const passed = graded.filter((r) => r.verdict === "pass").length;
+  const scored = rs.filter((r) => r.recall != null);
+  const bits = [\`\${passed}/\${graded.length} pass\`];
+  if (scored.length) bits.push(\`recall \${pct(mean(scored.map((r) => r.recall)))}\`);
+  return \`\${bits.join(" · ")} (\${rs.length})\`;
+}
+
+const suiteOrder = ["core_deterministic", "adversarial", "canonical_sample", "semantic_stress", "regression"];
+const suites = [...new Set(rows.map((r) => r.suite))].sort((a, b) => {
+  const ai = suiteOrder.indexOf(a), bi = suiteOrder.indexOf(b);
+  return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+});
+document.getElementById("suite").innerHTML =
+  '<option value="">all suites</option>' + suites.map((s) => \`<option value="\${s}">\${s}</option>\`).join("");
 
 document.getElementById("summary").innerHTML =
-  \`<span id="passrate" class="\${passRate != null && passRate >= 50 ? "pass" : "fail"}">\${passRate == null ? "-" : passRate + "%"} pass</span>\` +
-  \`<span class="detail">answer: \${passed}/\${graded.length} deterministic pass (\${rows.length - graded.length} judge/deferred)<br>\` +
-  (scored.length ? \`retrieval: recall \${pct(mean(scored.map((r) => r.recall)))} · precision \${pct(mean(scored.map((r) => r.precision)))} · mrr \${(mean(scored.map((r) => r.mrr)) ?? 0).toFixed(2)} (\${scored.length} scored)<br>\` : "") +
-  \`tool calls: avg \${avgCalls.toFixed(1)} · max \${maxCalls}</span>\`;
+  \`<span class="detail">\${suites.map((s) => \`\${s}: \${summaryLine(rows.filter((r) => r.suite === s))}\`).join("<br>")}<br>\` +
+  \`<b>overall: \${summaryLine(rows)}</b></span>\`;
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -168,6 +182,7 @@ let sortKey = "id", sortDir = 1;
 function render() {
   const q = document.getElementById("search").value.toLowerCase();
   const v = document.getElementById("verdict").value;
+  const s = document.getElementById("suite").value;
   const sorted = [...rows].sort((a, b) => {
     const av = a[sortKey], bv = b[sortKey];
     if (av == null) return 1;
@@ -178,10 +193,12 @@ function render() {
   tbody.innerHTML = "";
   for (const r of sorted) {
     if (v && r.verdict !== v) continue;
+    if (s && r.suite !== s) continue;
     if (q && !r.id.toLowerCase().includes(q) && !r.raw.question.toLowerCase().includes(q)) continue;
     const tr = document.createElement("tr");
     tr.innerHTML = \`
       <td>\${r.id}</td>
+      <td class="muted">\${r.suite}</td>
       <td class="\${r.verdictCls}">\${r.verdict}</td>
       <td>\${r.match}</td>
       <td class="q"><div class="clamp">\${escapeHtml(r.raw.question)}</div></td>
@@ -191,6 +208,7 @@ function render() {
       <td>\${pct(r.precision)}</td>
       <td>\${r.mrr == null ? "-" : r.mrr.toFixed(2)}</td>
       <td class="tools">
+        <div class="tools-count">\${r.toolCallCount} call\${r.toolCallCount === 1 ? "" : "s"}</div>
         <div class="clamp tools-preview">\${toolsPreviewHtml(r.raw)}</div>
         <div class="tools-full">\${toolsFullHtml(r.raw)}</div>
       </td>
@@ -212,6 +230,7 @@ document.querySelectorAll("th[data-k]").forEach((th) => {
 });
 document.getElementById("search").addEventListener("input", render);
 document.getElementById("verdict").addEventListener("change", render);
+document.getElementById("suite").addEventListener("change", render);
 render();
 </script>
 </body>

@@ -57,13 +57,20 @@ async function main(): Promise<void> {
     }
 
     const predicted = extractRetrieval(handler.toolCalls);
+    // retrieval_evaluation gates scoring explicitly (required only); not_applicable and
+    // trajectory_only are never scored on recall/precision/MRR, regardless of whether
+    // relevant_ids happens to be empty.
+    const retrievalScore =
+      args.onlyAnswer || rec.retrieval_evaluation !== "required"
+        ? null
+        : scoreRetrieval(rec.relevant_ids, predicted);
     results.push({
       id: rec.id,
       question: rec.question,
       answer,
       expected: rec.answer,
       answerScore: args.onlyRetrieval ? null : scoreAnswer(rec, answer),
-      retrievalScore: args.onlyAnswer ? null : scoreRetrieval(rec.relevant_ids, predicted),
+      retrievalScore,
       expectedIds: rec.relevant_ids,
       predicted,
       toolCallCount: handler.toolCalls.length,
@@ -72,7 +79,8 @@ async function main(): Promise<void> {
     process.stdout.write(".");
   }
 
-  printReport(results);
+  const suiteById = new Map(records.map((rec) => [rec.id, rec.dims?.provenance.suite ?? "core_deterministic"]));
+  printReport(results, suiteById);
   const out = writeReport(results);
   console.log(`Wrote ${out}`);
 }

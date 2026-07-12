@@ -1,0 +1,12 @@
+// === suite: core_deterministic ===
+{"id":"gold_chal_0001","question":"Which regions do our customers span?","answer":"ANZ, Canada, Nordics, North America West","match_type":"set_equality","retrieval_evaluation":"not_applicable","relevant_ids":{}}
+{"id":"gold_chal_0002","question":"Rank the two largest departments by number of employees.","answer":"Engineering, Product","match_type":"ranked_list","retrieval_evaluation":"not_applicable","relevant_ids":{}}
+{"id":"gold_chal_0003","question":"Which industry has the most account scenarios?","answer":"Energy","match_type":"exact_scalar","retrieval_evaluation":"not_applicable","relevant_ids":{}}
+{"id":"gold_chal_0004","question":"Is SignalFlow classified as a Direct competitor?","answer":"true","match_type":"boolean","retrieval_evaluation":"not_applicable","relevant_ids":{}}
+{"id":"gold_chal_0005","question":"What is the target persona for the Orchestrator product?","answer":"Site Reliability Engineers, Ops Automation","match_type":"set_equality","retrieval_evaluation":"required","relevant_ids":{"products":["prd_28d2947423c7"]}}
+{"id":"gold_chal_0006","question":"How many implementations have a contract value above $1,000,000?","answer":"5","match_type":"numeric_exact","retrieval_evaluation":"not_applicable","relevant_ids":{}}
+{"id":"gold_chal_0007","question":"List Northstar Signal's products in order of how often they're referenced across artifacts, most first.","answer":"Orchestrator, Signal Ingest, Event Nexus, Signal Insights","match_type":"ranked_list","retrieval_evaluation":"required","relevant_ids":{"products":["prd_28d2947423c7","prd_ed38a2edeb94","prd_f8d861694bac","prd_29a3d7cb61e9"]}}
+{"id":"gold_chal_0008","question":"How many employees are in the Customer Success department?","answer":"2","match_type":"numeric_exact","retrieval_evaluation":"not_applicable","relevant_ids":{}}
+{"id":"gold_chal_0009","question":"Rank our products by the total contract value of the implementations that use them, largest first.","answer":"Event Nexus, Orchestrator, Signal Ingest, Signal Insights","match_type":"ranked_list","retrieval_evaluation":"not_applicable","relevant_ids":{}}
+{"id":"gold_chal_0010","question":"Which competitor is our only Indirect one?","answer":"MetricLens","match_type":"exact_scalar","retrieval_evaluation":"required","relevant_ids":{"competitors":["cmp_be550ede2596"]}}
+{"id":"gold_chal_0011","question":"Is Northstar Signal headquartered in Seattle?","answer":"true","match_type":"boolean","retrieval_evaluation":"not_applicable","relevant_ids":{}}

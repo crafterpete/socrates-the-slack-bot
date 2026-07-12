@@ -12,7 +12,8 @@
     "db:tables": "tsx src/scripts/list-tables.ts",
     "eval": "tsx src/eval/run.ts",
     "eval:build-golden": "tsx src/eval/build-golden.ts",
-    "eval:view": "tsx src/eval/view-report.ts"
+    "eval:view": "tsx src/eval/view-report.ts",
+    "eval:test": "node --import tsx --test src/eval/__tests__/*.test.ts"
   },
   "engines": {
     "node": ">=20"

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../config/env.js";
-import type { DimensionTuple, GoldenRecord } from "./types.js";
+import type { CaseTuple, GoldenRecord } from "./types.js";
 
 function readJsonl<T>(filePath: string): T[] {
   const raw = readFileSync(filePath, "utf8");
@@ -26,23 +26,33 @@ export function loadDataset(datasetPath?: string): GoldenRecord[] {
 
   const records = readJsonl<GoldenRecord>(goldenPath);
   if (existsSync(tuplesPath)) {
-    const byId = new Map(readJsonl<DimensionTuple>(tuplesPath).map((t) => [t.id, t]));
+    const byId = new Map(readJsonl<CaseTuple>(tuplesPath).map((t) => [t.id, t]));
     for (const rec of records) rec.dims = byId.get(rec.id);
   }
   return records;
 }
 
-// Filters like query_type=numeric or match_type=numeric_exact. Top-level scorer fields win;
-// otherwise the key is matched against the joined dimension tuple.
+function getPath(obj: unknown, dotted: string): unknown {
+  return dotted.split(".").reduce<unknown>((cur, key) => {
+    if (cur == null || typeof cur !== "object") return undefined;
+    return (cur as Record<string, unknown>)[key];
+  }, obj);
+}
+
+// Filters like match_type=numeric_exact (top-level scorer field) or provenance.suite=
+// semantic_stress / task.operation=aggregate (dot-path into the joined CaseTuple). Top-level
+// scorer fields win when the key has no dot; otherwise it's resolved against `dims`.
 export function applyFilters(records: GoldenRecord[], filters: Record<string, string>): GoldenRecord[] {
   const entries = Object.entries(filters);
   if (entries.length === 0) return records;
 
   return records.filter((rec) =>
     entries.every(([key, value]) => {
-      const top = (rec as unknown as Record<string, unknown>)[key];
-      if (top !== undefined && key !== "dims") return String(top) === value;
-      const dim = rec.dims?.[key as keyof typeof rec.dims];
+      if (!key.includes(".")) {
+        const top = (rec as unknown as Record<string, unknown>)[key];
+        if (top !== undefined && key !== "dims") return String(top) === value;
+      }
+      const dim = key.includes(".") ? getPath(rec.dims, key) : (rec.dims as Record<string, unknown> | undefined)?.[key];
       if (Array.isArray(dim)) return dim.map(String).includes(value);
       return dim !== undefined && String(dim) === value;
     }),
