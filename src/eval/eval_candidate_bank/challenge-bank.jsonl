@@ -10,3 +10,6 @@
 {"id":"gold_chal_0009","question":"Rank our products by the total contract value of the implementations that use them, largest first.","answer":"Event Nexus, Orchestrator, Signal Ingest, Signal Insights","match_type":"ranked_list","retrieval_evaluation":"not_applicable","relevant_ids":{}}
 {"id":"gold_chal_0010","question":"Which competitor is our only Indirect one?","answer":"MetricLens","match_type":"exact_scalar","retrieval_evaluation":"required","relevant_ids":{"competitors":["cmp_be550ede2596"]}}
 {"id":"gold_chal_0011","question":"Is Northstar Signal headquartered in Seattle?","answer":"true","match_type":"boolean","retrieval_evaluation":"not_applicable","relevant_ids":{}}
+{"id":"gold_chal_0012","question":"What year was the company founded?","answer":"2019","match_type":"numeric_exact","retrieval_evaluation":"not_applicable","relevant_ids":{}}
+{"id":"gold_chal_0013","question":"What are the distinct artifact types in the corpus?","answer":"competitor_research, customer_call, internal_communication, internal_document, support_ticket","match_type":"set_equality","retrieval_evaluation":"not_applicable","relevant_ids":{}}
+{"id":"gold_chal_0014","question":"Do we have any Healthcare customers that are flagged as 'at risk'?","answer":"false","match_type":"boolean","retrieval_evaluation":"not_applicable","relevant_ids":{}}
