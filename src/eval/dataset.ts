@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { env } from "../config/env.js";
+import { GOLDEN_FILENAME, TUPLES_FILENAME } from "./paths.js";
 import type { CaseTuple, GoldenRecord } from "./types.js";
 
 function readJsonl<T>(filePath: string): T[] {
@@ -21,8 +22,8 @@ function readJsonl<T>(filePath: string): T[] {
 // Loads golden.jsonl and left-joins tuples.jsonl by id so records carry their dimension
 // tuple for filtering, while golden.jsonl itself stays lean.
 export function loadDataset(datasetPath?: string): GoldenRecord[] {
-  const goldenPath = path.resolve(env.projectRoot, datasetPath ?? "src/eval/golden.jsonl");
-  const tuplesPath = path.resolve(path.dirname(goldenPath), "tuples.jsonl");
+  const goldenPath = path.resolve(env.projectRoot, datasetPath ?? path.join("src/eval", GOLDEN_FILENAME));
+  const tuplesPath = path.resolve(path.dirname(goldenPath), TUPLES_FILENAME);
 
   const records = readJsonl<GoldenRecord>(goldenPath);
   if (existsSync(tuplesPath)) {

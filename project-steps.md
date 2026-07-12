@@ -2,7 +2,6 @@ Project planning
 - v0: evaluation criteria set
 - v1: slack bot --> auth --> given sql tools for search based on some context (keyword search, filter, parse)
     - Single slack messages
-    - Slack threads
     - Ack + updates? 
     - Evaluate performance & document eval history
 - v2: expand to vector search + evaluate performance
@@ -13,11 +12,10 @@ Project planning
     - HMAC validation? 3 second ack?
     - DB auth / tool auth? 
     - Injection guardrails
-- v5: react loops + reflection loops
-- v6: live human feedback + data set expansion/updates 
+- v5: live human feedback + data set expansion/updates 
     - Humans can reply thumbs up and thumbs down
     - Output gets saved in a database
-- v7 (subject to change): llm as a judge for evals
+- v6: (subject to change): llm as a judge for evals
     - deterministic checks stay handrolled (retrieval recall@k/precision@k/MRR; answer exact/numeric/set/boolean/abstain markers) --> no API, reproducible, runs every pass
     - offload judge checks to this stage (free-form summaries, faithfulness/groundedness, trajectory) --> lean on openevals + agentevals instead of handrolling judge prompts + parsers
 

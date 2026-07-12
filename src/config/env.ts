@@ -16,6 +16,7 @@ const envSchema = z.object({
   SLACK_APP_TOKEN: z.string().optional(),
   DATABASE_PATH: z.string().default("src/db/synthetic_startup.sqlite"),
   ANTHROPIC_MODEL: z.string().default("claude-opus-4-8"),
+  NODE_ENV: z.string().default("development"),
 });
 
 const parsed = envSchema.safeParse(process.env);
