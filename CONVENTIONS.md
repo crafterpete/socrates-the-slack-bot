@@ -33,3 +33,4 @@ How we write code here, for humans and agents. The codebase is deliberately rigi
 
 - Fail loudly. Expected failures return a typed result (validation, not-found); the unexpected throws and never passes silently. Never swallow an error on a critical path to keep going. Propagate it or surface it.
 - No non-null assertions (!). Use type guards, defaults, or validated helpers. Lint-enforced.
+- Never add tombstone comments. Code should be generally self-documenting. Avoid adding comments unless it's strictly necessary for confusing code.

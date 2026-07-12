@@ -9,3 +9,5 @@ resources/
 # SQLite transient sidecar files (regenerated on open)
 *.sqlite-shm
 *.sqlite-wal
+
+debug.txt
