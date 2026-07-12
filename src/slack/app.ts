@@ -1,5 +1,5 @@
 import { App, LogLevel } from "@slack/bolt";
-import { getSlackEnv } from "../config/env.js";
+import { env, getSlackEnv } from "../config/env.js";
 import { registerSlackHandlers } from "./handlers.js";
 
 export function createSlackApp(): App {
@@ -9,7 +9,7 @@ export function createSlackApp(): App {
     token: slackEnv.SLACK_BOT_TOKEN,
     appToken: slackEnv.SLACK_APP_TOKEN,
     socketMode: true,
-    logLevel: process.env.NODE_ENV === "production" ? LogLevel.INFO : LogLevel.DEBUG,
+    logLevel: env.NODE_ENV === "production" ? LogLevel.INFO : LogLevel.DEBUG,
   });
 
   registerSlackHandlers(app);
