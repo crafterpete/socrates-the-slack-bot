@@ -1,4 +1,5 @@
 import type { App } from "@slack/bolt";
+import { requestConfig } from "../agent/gateway.js";
 import { askAgent, createQaAgent } from "../agent/index.js";
 import { appendThreadMessage, getThreadHistory } from "../memory/thread-store.js";
 
@@ -11,6 +12,7 @@ function stripBotMention(text: string): string {
 async function handleUserQuestion(args: {
   channel: string;
   threadTs?: string;
+  userId: string;
   userText: string;
   say: (message: { text: string; thread_ts?: string }) => Promise<unknown>;
   client: {
@@ -21,7 +23,7 @@ async function handleUserQuestion(args: {
   };
   messageTs: string;
 }): Promise<void> {
-  const { channel, threadTs, userText, say, client, messageTs } = args;
+  const { channel, threadTs, userId, userText, say, client, messageTs } = args;
   const question = stripBotMention(userText);
 
   if (!question) {
@@ -37,7 +39,7 @@ async function handleUserQuestion(args: {
   try {
     const history = getThreadHistory(channel, threadTs);
     const messages = [...history, { role: "user" as const, content: question }];
-    const answer = await askAgent(agent, messages);
+    const answer = await askAgent(agent, messages, requestConfig({ userId, channel, threadTs }));
 
     appendThreadMessage(channel, threadTs, { role: "user", content: question });
     appendThreadMessage(channel, threadTs, { role: "assistant", content: answer });
@@ -59,6 +61,7 @@ export function registerSlackHandlers(app: App): void {
     await handleUserQuestion({
       channel: event.channel,
       threadTs: event.thread_ts,
+      userId: event.user ?? "unknown",
       userText: event.text,
       say,
       client,
@@ -67,7 +70,7 @@ export function registerSlackHandlers(app: App): void {
   });
 
   app.message(async ({ message, say, client }) => {
-    if (message.subtype || !("text" in message) || !message.text) {
+    if (message.subtype || !("text" in message) || !message.text || !message.user) {
       return;
     }
 
@@ -79,6 +82,7 @@ export function registerSlackHandlers(app: App): void {
     await handleUserQuestion({
       channel: message.channel,
       threadTs: message.thread_ts,
+      userId: message.user,
       userText: message.text,
       say,
       client,
