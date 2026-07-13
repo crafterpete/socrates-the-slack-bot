@@ -24,7 +24,7 @@ Things to consider
 - Eval suite (DONE)
     - Multi-turn: is the query the user input vs user input + compacted memory vs user input + entire memory
     - Human feedback (thumbs up vs thumbs down) for data set
-- Security, guardrails, and malicious inputs (NOT DONE)
+- Security, guardrails, and malicious inputs (DONE)
 - Authentication and authorization (DONE)
     - Messages should be constrained to user xyz & same with convo history
 - Searching mechanism (DONE)

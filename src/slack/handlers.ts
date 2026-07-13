@@ -1,5 +1,6 @@
 import type { App } from "@slack/bolt";
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
+import { logInputClassification } from "../agent/classifier.js";
 import { requestConfig } from "../agent/gateway.js";
 import { askAgent, createQaAgent } from "../agent/index.js";
 import { COMPACTION_THRESHOLD, maybeCompactThread } from "../memory/compaction.js";
@@ -191,6 +192,8 @@ async function handleUserQuestion(args: {
     return;
   }
 
+  logInputClassification(question, { userId, channel, threadTs: conversationTs });
+
   await client.reactions.add({ channel, timestamp: messageTs, name: "eyes" });
 
   // Reply instantly with a placeholder, then edit that same message into the final answer. If the
@@ -245,8 +248,10 @@ async function handleUserQuestion(args: {
     await deliver(answer);
     await settleReaction("classical_building");
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error";
-    const reply = escapeBroadcasts(`Apologies — I stumbled while reasoning that one through: ${message}`);
+    // Raw error text (SQL fragments, provider request ids, zod internals) stays in the server log;
+    // the channel gets a generic apology traceable back here via the thread ts.
+    console.error(`Agent error in ${channel}/${conversationTs}:`, error);
+    const reply = "Apologies — I stumbled while reasoning that one through. Try rephrasing, or ask again in a moment.";
     appendThreadMessage(channel, conversationTs, { role: "assistant", content: reply });
     await progress?.finish();
     await deliver(reply);

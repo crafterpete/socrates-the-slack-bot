@@ -18,6 +18,7 @@ const envSchema = z.object({
   DATABASE_PATH: z.string().default("src/db/synthetic_startup.sqlite"),
   STATE_DATABASE_PATH: z.string().default("data/state.sqlite"),
   ANTHROPIC_MODEL: z.string().default("claude-opus-4-8"),
+  CLASSIFIER_MODEL: z.string().default("claude-haiku-4-5-20251001"),
   EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   NODE_ENV: z.string().default("development"),
 });

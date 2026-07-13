@@ -19,11 +19,17 @@ import {
 const ENTITY_ENUM = z.enum(ENTITY_NAMES);
 const ENTITY_LIST_PROSE = ENTITY_NAMES.join(", ");
 
+const FILTER_VALUE_MAX_LEN = 200;
+const FILTER_LIST_MAX = 50;
+const QUERY_MAX_LEN = 500;
+
+const scalarFilterValue = z.union([z.string().max(FILTER_VALUE_MAX_LEN), z.number()]);
+
 const FILTER_SCHEMA = z.object({
-  column: z.string().describe("Column name to filter on"),
+  column: z.string().max(64).describe("Column name to filter on"),
   op: z.enum(FILTER_OPS),
   value: z
-    .union([z.string(), z.number(), z.array(z.union([z.string(), z.number()]))])
+    .union([scalarFilterValue, z.array(scalarFilterValue).max(FILTER_LIST_MAX)])
     .describe("A single value, except for \"in\" (array of values) and \"between\" (array of exactly 2 values)"),
 });
 
@@ -74,12 +80,12 @@ const queryEntitiesSchema = z.object({
 });
 
 const idFilter = z
-  .union([z.string(), z.array(z.string())])
+  .union([z.string().max(FILTER_VALUE_MAX_LEN), z.array(z.string().max(FILTER_VALUE_MAX_LEN)).max(FILTER_LIST_MAX)])
   .optional()
   .describe("A single value, or a list of values matched as OR (SQL IN)");
 
 const searchArtifactsSchema = z.object({
-  query: z.string(),
+  query: z.string().min(1).max(QUERY_MAX_LEN),
   exact_phrase: z
     .boolean()
     .default(true)
@@ -106,8 +112,8 @@ const searchArtifactsSchema = z.object({
       product_id: idFilter,
       competitor_id: idFilter,
       artifact_type: idFilter,
-      created_after: z.string().optional().describe("ISO date, inclusive lower bound on created_at"),
-      created_before: z.string().optional().describe("ISO date, inclusive upper bound on created_at"),
+      created_after: z.string().max(40).optional().describe("ISO date, inclusive lower bound on created_at"),
+      created_before: z.string().max(40).optional().describe("ISO date, inclusive upper bound on created_at"),
     })
     .default({}),
   mode: z

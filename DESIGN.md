@@ -1,4 +1,38 @@
-Ongoing design Log
+## v-next: Remaining things to do
+Socrates is now alive and supporting thread-level multi-turn conversations, with memory compaction, passive listening between @Socrates tags, and live user feedback fed back to a db. 
+
+It's armed with parameterized, secure search tools for SQL search, BM25 search, and hybrid (BM25 + semantic search). The agent has an extensive eval suite across adversarial, semantic, deterministic, and aggregation samples.
+
+See: @/eval_reports/final_eval_report.html
+![Final eval snippet](eval_reports/final-eval-snippet.jpg)
+
+Between v0 and our latest iteration, we've raised our recall (~60% -> ~80%), precision (~42% -> ~60%), and MRR (~0.5 -> ~0.8). Our semantic & complex query answers are also much more accurate (the deterministic tests were already performing well). We've reduced the number of tool calls required (none >6 in our suite, even with parallel tool calling enabled). 
+
+So what's next? Some things that I wish I got to, but ran out of time: 
+- Overall pass/fail rates are pretty good, but both recall and precision can be improved
+- Implementing an LLM as a judge on the eval suite (this will be useful to automatically score the more complex queries)
+- Using that LLM judge to experiment with an adversarial agent to refine the quality of each output
+- Since our deterministic queries were already performing extremely well, I would've liked to experiment with a router based model (where a classifier kicks off different calls to different LLM tiers). I'd bet that cheaper models can still answer the easy queries (deterministic evals in our golden set) at a very high success rate.
+- It would've been interesting to test the discriminator against the adversarial eval suite.
+
+
+## v5: Security and guardrails
+Security is, broadly speaking, a full stack concern. LLM inputs and outputs are notoriously difficult to manage, and input sanitization isn't enough (users can disguise inputs or attempt to inject seemingly safe data to be saved to a db for a downstream attack). 
+
+Fortunately, the Socrates app will largely be used by a trusted audience (people added to a slack channel) and is connected to Slack via websocket (not exposed to public http traffic).
+
+Furthermore, the app has these safety mechanisms implemented in prior versions: 
+- `read_only` & `query_only` settings on SQLite db: protects against mutations & sql injections
+- Tools are explicitly defined and parameterized (rather than a broad sql writing tool)
+- Querying tbales themselves operate on an allowlist (`ENTITY_SCHEMA`)
+- We set a hard tool-call cap to bound runaway loops
+- An adversarial portion of our eval test-suite
+- User input normalization with a max input length (`normalizeUserInput`)
+- A stub for `authorize` that's designed for LDAP systems and user permissions (leaving out of scope for this project)
+
+For this v5, I've added a two items not previously implemented: 
+- Input bounds for `searchArtifacts` queries (500 characters)
+- A log-only classifier at the `handleUserQuestion` level. This cheap (haiku) classifier logs either "on_topic", "off_topic", or "injection_attempt". I don't have the time remaining to rigorously test this classifier w/ a meaningful eval suite to put it in the critical path, but that would be next on my list of things to do. 
 
 ## v4: A more friendly slack bot & live feedback
 Now, as mentioned in the core requirements file, agents can take a while to run, so we'll want the user to know that Socrates has seen the message and is working on it.
@@ -7,9 +41,13 @@ Now, as mentioned in the core requirements file, agents can take a while to run,
 
 ![And he updates the user once the answer comes to him.](eval_reports/v4/v4-the-answer-came.jpg)
 
-In my test cases so far, it's never been more than a couple seconds of runtime, and we've hard-capped the tool call count to be 8 messages. 
+In my test cases so far, it's never been more than a couple seconds of runtime, and I've hard-capped the max-tool-call limit to 8. So I don't think latency is likely to stretch very long. Having said that, Socrates updates the user every second (to respect Slack's rate limit) with the number of tool calls it's done so far. 
 
+Separately, what if we want to receive live feedback for from Socrates to inform our regression tests and eval suite? Well, the good news is that we can now give Socrates live feedback: 
 
+![Providing socrates with feedback](eval_reports/v4/v4-thumbs-up-feedback.jpg)
+
+![Now saves to a db to inform future evals and regression tests](eval_reports/v4/v4-feedback-db.jpg)
 
 ## v3: Multi-turn queries and memory management
 Since we want multiple turn conversations and history, we'll need to pipe slack messages into the agent's context window.
@@ -59,7 +97,6 @@ The mechanics of this search are simple:
 
 User Query --> Agent defines search query --> tool call --> query embedded via openai call --> cosine similarity search against artifact vector --> Top-k vectors are reconciled with Top-k keyword-search via RRF --> ranked artifacts returned back to agent.
 
-
 With this, the agent can lean more heavily on semantic meaning. As expected, it performs much better on recall, precision, and the tool count. 
 
 ![Before](eval_reports/v2/v2-semantic-queries-before.jpg)
@@ -75,6 +112,8 @@ However, the agent still struggles with recall for semantic queries that require
 I think two directions we could take to improve this are: 
 - **Focus on precision**: Our precision on these semantic queries aren't very high. This leads to us missing other relevant information because the top-k outputs are imprecise. Some things we can do here: steer the agent's semantic querying pattern, experiment with how we're scoring and chunking the artifact vectors, revisit our hybrid search approach.
 - **Let the agent know about relevant results beyond top-k**: We currently return some top-k results for the agent. Sometimes there are other relevant results that are further down the set. Nudging the agent to look for them is a bit brute-forcey, but should improve recall at the cost of precision & context bloat.
+
+One thing I experimented with was giving the agent the ability to use facets in its `search_artifacts` tool, which gives us a better outline / shape for its search results (grouped by whichever facet columns it cares about.) However, the eval outputs were largely unchanged.
 
 ## v1: Initial Slack Bot + Sql Tooling
 
