@@ -59,10 +59,7 @@ async function main(): Promise<void> {
     }
 
     const predicted = extractRetrieval(handler.toolCalls);
-    // retrieval_evaluation gates scoring explicitly (required only); not_applicable and
-    // trajectory_only are never scored on recall/precision/MRR, regardless of whether
-    // relevant_ids happens to be empty. modality defaults to "none" (no MRR) if a record is
-    // somehow missing its tuples.jsonl dims — never fabricate a ranked score without knowing.
+    // Only retrieval_evaluation="required" is ever scored; modality defaults to "none" if dims are missing.
     const retrievalScore =
       args.onlyAnswer || rec.retrieval_evaluation !== "required"
         ? null

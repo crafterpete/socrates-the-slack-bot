@@ -10,4 +10,7 @@ resources/
 *.sqlite-shm
 *.sqlite-wal
 
+# Local bot state (conversation history)
+data/
+
 debug.txt

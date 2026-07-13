@@ -19,8 +19,7 @@ function readJsonl<T>(filePath: string): T[] {
     });
 }
 
-// Loads golden.jsonl and left-joins tuples.jsonl by id so records carry their dimension
-// tuple for filtering, while golden.jsonl itself stays lean.
+// Left-joins tuples.jsonl by id so records carry their dimension tuple while golden.jsonl stays lean.
 export function loadDataset(datasetPath?: string): GoldenRecord[] {
   const goldenPath = path.resolve(env.projectRoot, datasetPath ?? path.join("src/eval", GOLDEN_FILENAME));
   const tuplesPath = path.resolve(path.dirname(goldenPath), TUPLES_FILENAME);
@@ -40,9 +39,7 @@ function getPath(obj: unknown, dotted: string): unknown {
   }, obj);
 }
 
-// Filters like match_type=numeric_exact (top-level scorer field) or provenance.suite=
-// semantic_stress / task.operation=aggregate (dot-path into the joined CaseTuple). Top-level
-// scorer fields win when the key has no dot; otherwise it's resolved against `dims`.
+// A dotted key (e.g. provenance.suite) resolves against the joined `dims`; an undotted key checks the top-level record first.
 export function applyFilters(records: GoldenRecord[], filters: Record<string, string>): GoldenRecord[] {
   const entries = Object.entries(filters);
   if (entries.length === 0) return records;

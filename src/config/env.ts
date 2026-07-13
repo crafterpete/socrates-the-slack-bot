@@ -16,6 +16,7 @@ const envSchema = z.object({
   SLACK_BOT_TOKEN: z.string().optional(),
   SLACK_APP_TOKEN: z.string().optional(),
   DATABASE_PATH: z.string().default("src/db/synthetic_startup.sqlite"),
+  STATE_DATABASE_PATH: z.string().default("data/state.sqlite"),
   ANTHROPIC_MODEL: z.string().default("claude-opus-4-8"),
   EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   NODE_ENV: z.string().default("development"),
@@ -35,6 +36,7 @@ export const env = {
   ...parsed.data,
   projectRoot,
   databasePath: path.resolve(projectRoot, parsed.data.DATABASE_PATH),
+  stateDatabasePath: path.resolve(projectRoot, parsed.data.STATE_DATABASE_PATH),
 };
 
 export type SlackEnv = {

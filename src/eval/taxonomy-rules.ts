@@ -12,10 +12,7 @@ import type {
   SourceGrounding,
 } from "./types.js";
 
-// Pure taxonomy rules (see EVALS.md): derivations and the build-time validator.
-// Kept free of I/O and of the specific case data so it is independently testable — see
-// src/eval/__tests__/taxonomy-rules.test.ts. build-golden.ts imports this module; it must not
-// duplicate these rules inline.
+// Pure taxonomy derivations and the build-time validator; build-golden.ts must not duplicate these rules inline.
 
 export function deriveMatchType(answerShape: AnswerShape, answerability: Answerability, hasTolerance: boolean): MatchType {
   if (answerability === "unanswerable") return "abstain";
@@ -47,10 +44,7 @@ export function deriveComplexityBucket(requiredOperations: RequiredOperation[]):
   return "complex";
 }
 
-// Fails on structural contradictions per EVALS.md. This is not a natural-language
-// theorem prover: it catches obvious, mechanically-checkable inconsistencies only. Throws
-// Error(message) on the first violation found; the message never carries the "gold_" id
-// prefix here — callers (build-golden.ts) can prepend context if useful.
+// Catches mechanically-checkable taxonomy inconsistencies; throws on the first violation found.
 export function validateCase(
   question: string,
   spec: CaseSpec,
@@ -125,6 +119,5 @@ export function validateCase(
     if (!(challenge.answerability === "answerable" && retrieval.evaluation === "required" && modalityOk && challenge.semanticGap !== "none" && hasIds))
       fail("suite=semantic_stress requires answerable + retrieval.evaluation=required + modality semantic|hybrid + semantic_gap!=none + non-empty relevant_ids");
   }
-  // Locked-case snapshot comparison (id/question/answer/relevant_ids) happens in the caller,
-  // which has the actual snapshot store in scope; this function only validates taxonomy structure.
+  // Locked-case snapshot comparison happens in the caller, which has the snapshot store in scope.
 }

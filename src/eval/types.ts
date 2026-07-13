@@ -16,13 +16,9 @@ export type MatchType =
   | "refuse"
   | "judge";
 
-// ---- Case taxonomy (see EVALS.md) -----------------------------------------------------------
-// CaseSpec is authored in camelCase; the builder emits the snake_case CaseTuple shape below to
-// tuples.jsonl. Every group is a conceptually separate axis; do not collapse them back into one
-// overloaded field.
+// CaseSpec is authored in camelCase; the builder emits the snake_case CaseTuple shape to tuples.jsonl.
 
-// Single source of truth for the suites and their display/sort order. Consumers (console report,
-// HTML report, builder partitioning) must not re-list these.
+// Single source of truth for the suites and their display/sort order.
 export const SUITE_ORDER = [
   "core_deterministic",
   "adversarial",
@@ -242,9 +238,7 @@ export interface RetrievalScore {
   scored: boolean;
   recall: number;
   precision: number;
-  // null when the case's retrieval.modality isn't ranked (structured-only lookups have no
-  // meaningful row order to score rank against); only lexical/semantic/hybrid cases get a number.
-  mrr: number | null;
+  mrr: number | null; // null when retrieval.modality isn't ranked
   perEntity: Record<string, PerEntityRetrieval>;
 }
 

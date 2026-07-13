@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { describeEntities, describeEntity, queryEntities, searchArtifacts } from "../query-builder.js";
 
-// Run with `npm run eval:test`.
-
 describe("queryEntities: filters", () => {
   test("eq", () => {
     const { rows } = queryEntities({
@@ -451,8 +449,7 @@ describe("queryEntities: group_by via (cross-table)", () => {
   });
 });
 
-// Pinned to semantic: false throughout — deterministic BM25-only assertions, unaffected by the
-// live embedding provider. See "searchArtifacts: hybrid" below for fused-ranking coverage.
+// Pinned to semantic: false — deterministic BM25-only assertions, unaffected by the live embedding provider.
 describe("searchArtifacts", () => {
   test("exact_phrase true matches the quoted phrase count", async () => {
     const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: true, semantic: false, limit: 15 });
@@ -460,8 +457,8 @@ describe("searchArtifacts", () => {
   });
 
   test("exact_phrase false (bag-of-words) matches a superset", async () => {
-    const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: false, semantic: false, limit: 15 });
-    assert.equal(rows.length, 15); // capped at max; the true bag-of-words match count (35) exceeds it
+    const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: false, semantic: false, limit: 20 });
+    assert.equal(rows.length, 20); // capped at max; the true bag-of-words match count (35) exceeds it
   });
 
   test("bag-of-words tolerates FTS5 special characters in the query", async () => {
@@ -490,9 +487,9 @@ describe("searchArtifacts", () => {
     assert.ok(rows.length > 1);
   });
 
-  test("hard-caps at 15 even when a larger limit is requested", async () => {
+  test("hard-caps at 20 even when a larger limit is requested", async () => {
     const { rows } = await searchArtifacts({ query: "runbook", exact_phrase: false, semantic: false, limit: 1000 });
-    assert.ok(rows.length <= 15);
+    assert.ok(rows.length <= 20);
   });
 
   test("mode: count returns an exact total, uncapped by limit", async () => {
@@ -513,6 +510,39 @@ describe("searchArtifacts", () => {
       filters: { customer_id: "cus_10762173c26d" },
     });
     assert.ok(rows.every((r) => r.customer_id === "cus_10762173c26d"));
+  });
+
+  test("a list-valued id filter matches artifacts from any of the listed values (OR)", async () => {
+    const base = { query: "renewal", exact_phrase: false, semantic: false, mode: "count" } as const;
+    const a = await searchArtifacts({ ...base, filters: { customer_id: "cus_e1ae80e00362" } });
+    const b = await searchArtifacts({ ...base, filters: { customer_id: "cus_c017e831b967" } });
+    const both = await searchArtifacts({ ...base, filters: { customer_id: ["cus_e1ae80e00362", "cus_c017e831b967"] } });
+    assert.ok((a.rows[0]!.value as number) > 0);
+    assert.ok((b.rows[0]!.value as number) > 0);
+    assert.equal(both.rows[0]!.value, (a.rows[0]!.value as number) + (b.rows[0]!.value as number));
+  });
+
+  test("a list-valued filter never returns artifacts outside the listed values", async () => {
+    const { rows } = await searchArtifacts({
+      query: "renewal",
+      exact_phrase: false,
+      semantic: false,
+      filters: { customer_id: ["cus_e1ae80e00362", "cus_c017e831b967"] },
+    });
+    assert.ok(rows.length > 0);
+    assert.ok(rows.every((r) => r.customer_id === "cus_e1ae80e00362" || r.customer_id === "cus_c017e831b967"));
+  });
+
+  test("an empty filter list is ignored rather than matching nothing", async () => {
+    const unfiltered = await searchArtifacts({ query: "renewal", exact_phrase: false, semantic: false, mode: "count" });
+    const emptyList = await searchArtifacts({
+      query: "renewal",
+      exact_phrase: false,
+      semantic: false,
+      mode: "count",
+      filters: { customer_id: [] },
+    });
+    assert.equal(emptyList.rows[0]!.value, unfiltered.rows[0]!.value);
   });
 
   test("mode: count ignores semantic (always a pure BM25 occurrence count)", async () => {
@@ -546,6 +576,18 @@ describe("searchArtifacts: hybrid", () => {
     });
     assert.ok(rows.length > 0);
     assert.ok(rows.every((r) => r.customer_id === "cus_10762173c26d"));
+  });
+
+  test("a list-valued filter scopes the hybrid search to the listed candidates", async () => {
+    const candidates = ["cus_10762173c26d", "cus_e1ae80e00362"];
+    const { rows } = await searchArtifacts({
+      query: "customers running out of patience with how long our fixes are taking",
+      exact_phrase: false,
+      filters: { customer_id: candidates },
+      limit: 15,
+    });
+    assert.ok(rows.length > 0);
+    assert.ok(rows.every((r) => candidates.includes(r.customer_id as string)));
   });
 
   test("vector-only hits (no BM25 match) still get a snippet, falling back to summary", async () => {

@@ -65,8 +65,7 @@ function printSummaryLine(results: EvalResult[]): void {
   }
 }
 
-// Reports each provenance suite separately before any aggregate, per EVALS.md: a low
-// semantic-stress score must stay visible, not diluted by a large easy structured suite.
+// Reports each provenance suite separately before any aggregate so a low-scoring suite stays visible.
 export function printReport(results: EvalResult[], suiteById: Map<string, ProvenanceSuite | string>): void {
   const bySuite = new Map<string, EvalResult[]>();
   for (const r of results) {

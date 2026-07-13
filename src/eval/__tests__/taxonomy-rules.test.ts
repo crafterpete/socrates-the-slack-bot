@@ -3,10 +3,6 @@ import { describe, test } from "node:test";
 import { deriveComplexityBucket, deriveMatchType, deriveSourceGrounding, validateCase } from "../taxonomy-rules.js";
 import type { CaseSpec } from "../types.js";
 
-// Tests the taxonomy rules from EVALS.md: derivations (match_type,
-// source_grounding, complexity_bucket) and the build-time validateCase() contradictions.
-// Run with `npm run eval:test`.
-
 function baseSpec(overrides: Partial<CaseSpec> = {}): CaseSpec {
   return {
     provenance: { suite: "core_deterministic", origin: "synthetic_handcrafted", stability: "editable", executionTier: "core" },
@@ -189,8 +185,6 @@ describe("validateCase — one deliberate failure per constraint category", () =
   });
 
   test("free_text + answerable without judge match_type fails", () => {
-    // deriveMatchType always yields judge for free_text+answerable, so this path only fires
-    // if a future change breaks that invariant; the test locks the invariant in place.
     const spec = baseSpec({ output: { answerShape: "free_text" } });
     assert.doesNotThrow(() => validateCase("q", spec, "some text", {}, undefined));
   });

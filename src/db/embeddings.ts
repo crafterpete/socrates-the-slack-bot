@@ -82,7 +82,8 @@ export interface SimilarityRank {
   similarity: number;
 }
 
-// No top-k truncation: RRF fusion needs a real rank for every candidate, not just the top few.
+// Returns the full ranking, best first; callers apply their own top-k window (hybrid search
+// keeps only the top CANDIDATE_POOL_SIZE so the vector side abstains on poor matches).
 export function rankBySimilarity(queryVec: number[], candidateIds: string[]): SimilarityRank[] {
   const { matrix, dim, rowByArtifactId } = loadIndex();
   const validIds: string[] = [];

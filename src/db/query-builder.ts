@@ -61,10 +61,10 @@ export interface SearchArtifactsArgs {
   exact_phrase?: boolean;
   semantic?: boolean;
   filters?: {
-    customer_id?: string;
-    product_id?: string;
-    competitor_id?: string;
-    artifact_type?: string;
+    customer_id?: string | string[];
+    product_id?: string | string[];
+    competitor_id?: string | string[];
+    artifact_type?: string | string[];
     created_after?: string;
     created_before?: string;
   };
@@ -453,10 +453,13 @@ export function queryEntities(args: QueryEntitiesArgs): QueryResult {
   return { rows: enriched, ids: collectIds(args.entity, enriched) };
 }
 
-export const SEARCH_LIMIT_DEFAULT = 5;
-export const SEARCH_LIMIT_MAX = 15;
+export const SEARCH_LIMIT_DEFAULT = 10;
+export const SEARCH_LIMIT_MAX = 20;
 
-// Candidates ranked before RRF fusion truncates to args.limit — wider than the agent-facing limit.
+// Top-k window each retrieval side feeds into RRF fusion — wider than the agent-facing limit.
+// Applies to both sides symmetrically: BM25's top hits, and the vector side's nearest neighbors.
+// Candidates outside a side's window get no credit from it, so each side can abstain on
+// candidates it ranks poorly instead of every filtered row collecting residual vector score.
 const CANDIDATE_POOL_SIZE = 30;
 // Standard IR/RRF constant (also Elasticsearch's default).
 const RRF_K = 60;
@@ -468,22 +471,20 @@ function compileArtifactFilters(filters: ArtifactFilters | undefined, alias?: st
   const parts: string[] = [];
   const params: unknown[] = [];
   const f = filters ?? {};
-  if (f.customer_id) {
-    parts.push(`${prefix}customer_id = ?`);
-    params.push(f.customer_id);
-  }
-  if (f.product_id) {
-    parts.push(`${prefix}product_id = ?`);
-    params.push(f.product_id);
-  }
-  if (f.competitor_id) {
-    parts.push(`${prefix}competitor_id = ?`);
-    params.push(f.competitor_id);
-  }
-  if (f.artifact_type) {
-    parts.push(`${prefix}artifact_type = ?`);
-    params.push(f.artifact_type);
-  }
+  const addScoped = (column: string, value: string | string[] | undefined) => {
+    if (!value || (Array.isArray(value) && value.length === 0)) return;
+    if (Array.isArray(value)) {
+      parts.push(`${prefix}${column} IN (${value.map(() => "?").join(",")})`);
+      params.push(...value);
+    } else {
+      parts.push(`${prefix}${column} = ?`);
+      params.push(value);
+    }
+  };
+  addScoped("customer_id", f.customer_id);
+  addScoped("product_id", f.product_id);
+  addScoped("competitor_id", f.competitor_id);
+  addScoped("artifact_type", f.artifact_type);
   if (f.created_after) {
     parts.push(`${prefix}created_at >= ?`);
     params.push(f.created_after);
@@ -524,7 +525,11 @@ async function searchArtifactsHybrid(args: SearchArtifactsArgs, limit: number): 
   ).map((r) => r.id);
 
   const queryVec = await embedQuery(args.query);
-  const rankVec = new Map(rankBySimilarity(queryVec, structuredIds).map((r) => [r.artifactId, r.rank]));
+  const rankVec = new Map(
+    rankBySimilarity(queryVec, structuredIds)
+      .slice(0, CANDIDATE_POOL_SIZE)
+      .map((r) => [r.artifactId, r.rank]),
+  );
 
   const candidateIds = new Set<string>([...rankBm25.keys(), ...rankVec.keys()]);
   const fused = [...candidateIds]

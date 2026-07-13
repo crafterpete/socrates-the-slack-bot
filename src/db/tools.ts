@@ -38,9 +38,8 @@ const queryEntitiesSchema = z.object({
     .array(z.string())
     .optional()
     .describe(
-      "Columns to return; defaults to all columns on the entity. The entity's own id is always " +
-        "included regardless of this list (unless distinct is true) — include a foreign-key " +
-        "column explicitly if you also need it.",
+      "Columns to return; defaults to all. The entity's own id is always included (unless distinct " +
+        "is true); list foreign-key columns explicitly if you need them.",
     ),
   order_by: z.object({ column: z.string(), direction: z.enum(SORT_DIRECTIONS) }).optional(),
   group_by: z
@@ -55,11 +54,10 @@ const queryEntitiesSchema = z.object({
     ])
     .optional()
     .describe(
-      "Requires `aggregate` to also be set. A plain string groups by a column on this entity. " +
-        "Use `{ via, column }` to group by a column on a directly related entity instead — e.g. " +
-        "group `implementations` by the linked customer's industry with " +
-        "`{ via: \"customer_id\", column: \"industry\" }` — instead of fetching both entities and " +
-        "reconciling them yourself. Only works one hop through an existing foreign key.",
+      "Requires `aggregate`. A plain string groups by a column on this entity. `{ via, column }` " +
+        "groups by a column on the related entity that foreign key `via` points to, e.g. group " +
+        "`implementations` by customer industry with `{ via: \"customer_id\", column: \"industry\" }` " +
+        "rather than fetching both entities and reconciling them yourself. One hop only.",
     ),
   aggregate: z
     .object({
@@ -74,6 +72,11 @@ const queryEntitiesSchema = z.object({
   limit: z.number().int().min(1).max(ROWS_LIMIT_MAX).default(ROWS_LIMIT_DEFAULT),
 });
 
+const idFilter = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .describe("A single value, or a list of values matched as OR (SQL IN)");
+
 const searchArtifactsSchema = z.object({
   query: z.string(),
   exact_phrase: z
@@ -84,17 +87,16 @@ const searchArtifactsSchema = z.object({
     .boolean()
     .default(true)
     .describe(
-      "Fuses in meaning-based matching alongside exact-word matching (reciprocal rank fusion), so results " +
-        "surface even when the artifact uses different words than the query. Leave this on by default; only " +
-        "set false for a rare exact-term-only lookup (e.g. matching a literal id-like token). Does not apply " +
-        "to mode \"count\", which is always an exact textual-occurrence count.",
+      "Fuses meaning-based matching with exact-word matching, so results surface even when the artifact " +
+        "uses different words than the query. Leave on; set false only for literal exact-term lookups " +
+        "(e.g. an id-like token). Ignored by mode \"count\", which is always an exact occurrence count.",
     ),
   filters: z
     .object({
-      customer_id: z.string().optional(),
-      product_id: z.string().optional(),
-      competitor_id: z.string().optional(),
-      artifact_type: z.string().optional(),
+      customer_id: idFilter,
+      product_id: idFilter,
+      competitor_id: idFilter,
+      artifact_type: idFilter,
       created_after: z.string().optional().describe("ISO date, inclusive lower bound on created_at"),
       created_before: z.string().optional().describe("ISO date, inclusive upper bound on created_at"),
     })
@@ -103,25 +105,32 @@ const searchArtifactsSchema = z.object({
     .enum(QUERY_MODES)
     .default("rows")
     .describe(
-      "\"count\" returns an exact COUNT(*) of every matching artifact, unaffected by `limit` — use this for " +
-        "\"how many artifacts...\" questions instead of counting returned rows, since those are capped",
+      "\"count\" returns an exact COUNT(*) of every matching artifact, unaffected by `limit`. Use it for " +
+        "\"how many artifacts...\" questions; returned rows are capped, so never count those.",
     ),
-  limit: z.number().int().min(1).max(SEARCH_LIMIT_MAX).default(SEARCH_LIMIT_DEFAULT),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(SEARCH_LIMIT_MAX)
+    .default(SEARCH_LIMIT_DEFAULT)
+    .describe(
+      `Rows returned (default ${SEARCH_LIMIT_DEFAULT}, max ${SEARCH_LIMIT_MAX}). Set to ` +
+        `${SEARCH_LIMIT_MAX} when scanning many candidates via a list filter, so every candidate ` +
+        "can surface its best match.",
+    ),
 });
 
 export const databaseTools = [
   tool((args) => JSON.stringify(describeEntities(args.entities)), {
     name: "describe_entities",
     description:
-      "Look up the exact column names on one or more entities/tables in a single call, which of " +
-      "those columns are foreign keys (and which entity each one points to), and, for columns with " +
-      "a small enough set of distinct values (e.g. account_health, industry, artifact_type), the " +
-      "exact real values themselves under `enum_values` — so a filter's `value` never has to be " +
-      "guessed (\"at_risk\" vs the real \"at risk\") or discovered the expensive way via a failed " +
-      "filter or a group_by probe. Pass every entity you're unsure about together rather than one " +
-      "call per entity, e.g. when checking a `group_by: { via, column }` hop, pass both the base " +
-      "entity and the entity `via` points to at once. Call this before guessing at column names or " +
-      "filter values on an entity you haven't already queried in this conversation.",
+      "Look up an entity's exact column names, its foreign keys (and the entity each points to), " +
+      "and, for low-cardinality columns (e.g. account_health, industry, artifact_type), the exact " +
+      "stored values under `enum_values`, so filter values never have to be guessed (\"at_risk\" vs " +
+      "the real \"at risk\"). Call it before guessing column names or filter values on an entity you " +
+      "haven't queried yet, and pass every uncertain entity in one call rather than one call each " +
+      "(for a `group_by: { via, column }` hop, pass both the base entity and the one `via` points to).",
     schema: describeEntitiesSchema,
   }),
   tool((args) => JSON.stringify(queryEntities(args)), {
@@ -129,25 +138,24 @@ export const databaseTools = [
     description:
       `Filter, sort, count, or aggregate rows from one structured entity/table (${ENTITY_LIST_PROSE}). ` +
       "Use this for anything with a precise, complete answer: lookups, counts, existence checks, top-N " +
-      "rankings, grouped aggregates. Any foreign-key id in the result (e.g. customer_id) is automatically " +
-      "paired with its display name (customer_name), so joins are never needed just to show a readable " +
-      "name. To filter on a related entity's property (e.g. artifacts belonging to at-risk customers), " +
-      "first query that entity to get its ids, then pass them to this tool with op \"in\". To aggregate " +
-      "grouped by a related entity's column (e.g. total implementation contract value by customer " +
-      "industry), use `group_by: { via, column }` instead of fetching both entities and reconciling the " +
-      "numbers yourself.",
+      "rankings, grouped aggregates. Foreign-key ids in results are automatically paired with display " +
+      "names (customer_id comes with customer_name), so joins are never needed for readable names. To " +
+      "filter on a related entity's property (e.g. artifacts of at-risk customers), query that entity " +
+      "for its ids first, then pass them here with op \"in\". To aggregate by a related entity's column " +
+      "(e.g. contract value by customer industry), use `group_by: { via, column }`.",
     schema: queryEntitiesSchema,
   }),
   tool(async (args) => JSON.stringify(await searchArtifacts(args)), {
     name: "search_artifacts",
     description:
-      "Search over artifact title/summary/content (customer calls, support tickets, competitor reports, " +
-      "internal docs), most relevant first. Matches both by exact wording (BM25) and by meaning, fused " +
-      "into one ranking, so it finds relevant artifacts even when they use different words than the " +
-      "query. Use this for open-ended topic questions rather than exact-match lookups. Optionally scope " +
-      "the search with filters (e.g. customer_id from a prior query_entities call) to search within one " +
-      "entity's artifacts. For \"how many artifacts mention X\" questions, use mode \"count\" rather than " +
-      "counting returned rows.",
+      "Search artifact title/summary/content (customer calls, support tickets, competitor reports, " +
+      "internal docs), most relevant first. Matches by exact wording (BM25) and by meaning, fused into " +
+      "one ranking, so relevant artifacts surface even when their wording differs from the query. Use " +
+      "for open-ended topic questions, not exact-match lookups. Filters scope the search (e.g. " +
+      "customer_id from a prior query_entities call). Id filters accept a list: scan a known candidate " +
+      "set (e.g. every ANZ customer) with one call at max `limit`, not one search per id, unless you " +
+      "need each candidate's top matches individually. For \"how many artifacts mention X\" questions, " +
+      "use mode \"count\" rather than counting returned rows.",
     schema: searchArtifactsSchema,
   }),
 ];

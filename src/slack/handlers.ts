@@ -1,7 +1,8 @@
 import type { App } from "@slack/bolt";
 import { requestConfig } from "../agent/gateway.js";
 import { askAgent, createQaAgent } from "../agent/index.js";
-import { appendThreadMessage, getThreadHistory } from "../memory/thread-store.js";
+import { maybeCompactThread } from "../memory/compaction.js";
+import { appendThreadMessage, getThreadState, toAgentMessages } from "../memory/thread-store.js";
 
 const agent = createQaAgent();
 
@@ -24,6 +25,9 @@ async function handleUserQuestion(args: {
   messageTs: string;
 }): Promise<void> {
   const { channel, threadTs, userId, userText, say, client, messageTs } = args;
+  // A top-level mention has no thread_ts yet, but our reply creates a thread rooted at the
+  // triggering message — so that message's ts is the conversation key follow-ups will carry.
+  const conversationTs = threadTs ?? messageTs;
   const question = stripBotMention(userText);
 
   if (!question) {
@@ -37,19 +41,27 @@ async function handleUserQuestion(args: {
   await client.reactions.add({ channel, timestamp: messageTs, name: "eyes" });
 
   try {
-    const history = getThreadHistory(channel, threadTs);
+    const history = toAgentMessages(getThreadState(channel, conversationTs));
     const messages = [...history, { role: "user" as const, content: question }];
-    const answer = await askAgent(agent, messages, requestConfig({ userId, channel, threadTs }));
+    const answer = await askAgent(
+      agent,
+      messages,
+      requestConfig({ userId, channel, threadTs: conversationTs }),
+    );
 
-    appendThreadMessage(channel, threadTs, { role: "user", content: question });
-    appendThreadMessage(channel, threadTs, { role: "assistant", content: answer });
+    appendThreadMessage(channel, conversationTs, { role: "user", content: question });
+    appendThreadMessage(channel, conversationTs, { role: "assistant", content: answer });
 
-    await say({ text: answer, thread_ts: threadTs ?? messageTs });
+    await say({ text: answer, thread_ts: conversationTs });
+
+    maybeCompactThread(channel, conversationTs).catch((error) => {
+      console.error("Thread compaction failed:", error);
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     await say({
       text: `Sorry, something went wrong while answering that: ${message}`,
-      thread_ts: threadTs ?? messageTs,
+      thread_ts: conversationTs,
     });
   } finally {
     await client.reactions.remove({ channel, timestamp: messageTs, name: "eyes" }).catch(() => undefined);
