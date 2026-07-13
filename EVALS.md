@@ -28,7 +28,7 @@ npm run eval -- --dataset src/eval/challenge-bank.jsonl
 npm run eval:view                                  # render eval-report.json to a self-contained HTML file
 npm run eval:build-golden                          # rebuild datasets from the builder
 npm run eval:build-golden -- --update-snapshots    # refresh locked snapshots after a reviewed change
-npm test                                           # unit tests (taxonomy validator, scorers, query builder, etc.)
+npm run eval:test                                  # unit tests (taxonomy validator, scorers, query builder, etc.)
 ```
 
 ## What gets scored

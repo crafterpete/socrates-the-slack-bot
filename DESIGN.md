@@ -8,6 +8,9 @@ See: @/eval_reports/final_eval_report.html
 
 Between v0 and our latest iteration, we've raised our recall (60% -> 80%), precision (42% -> 60%), and MRR (0.5 -> 0.8). Our semantic & complex query answers are also much more accurate (the deterministic tests were already performing well). We've reduced the number of tool calls required (none > 6 in our suite, even with parallel tool calling enabled). 
 
+The current agent architecture itself is fairly simplistic:
+![LangGraph ReAct agent loop](docs/agent-architecture.png)
+
 So what's next? Some things that I wish I got to, but ran out of time: 
 
 - Overall pass/fail rates are pretty good, but both recall and precision can be improved
@@ -15,6 +18,8 @@ So what's next? Some things that I wish I got to, but ran out of time:
 - Using that LLM judge to experiment with an adversarial agent to refine the quality of each output
 - Since our deterministic queries were already performing extremely well, I would've liked to experiment with a router based model (where a classifier kicks off different calls to different LLM tiers). I'd bet that cheaper models can still answer the easy queries (deterministic evals in our golden set) at a very high success rate.
 - It would've been interesting to test the discriminator against the adversarial eval suite.
+- I didn't get a chance to set up tool-calling / trajectory evals. Those would've been helpful to track whether the expected tool calls are happening & enhancing our agent harness + prompts.
+
 
 ## v5: Security and guardrails
 

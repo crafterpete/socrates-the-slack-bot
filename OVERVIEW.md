@@ -2,6 +2,12 @@
 
 Socrates is a Slack Q&A bot grounded in a SQLite database of synthetic startup data (customers, implementations, artifacts like call transcripts and support tickets, employees, competitors, products). You @-mention it in a channel, it figures out what you're asking, queries the database with a small set of purpose-built tools, and replies in-thread. It supports multi-turn conversations, compacts long threads so context doesn't bloat, and records 👍/👎 reactions as feedback for future evals.
 
+## Agent architecture
+
+![LangGraph ReAct agent loop](docs/agent-architecture.png)
+
+The two graph nodes (`agent`, `tools`) and one conditional edge are the entire loop; everything else in the system either feeds it (Slack handler, thread memory) or consumes its output (answer delivery, feedback capture).
+
 This doc is the bird's-eye view. The details live in:
 
 - `DESIGN.md`: the build log, version by version, with the reasoning behind each decision
@@ -52,7 +58,7 @@ Organizational memory, cross-thread memory, and per-user memory are all delibera
 
 ## Security
 
-The audience is trusted (people added to a Slack channel) and the transport is Socket Mode over TLS, so the posture is defense in depth rather than paranoia:
+The audience is trusted (people added to a Slack channel) and the transport is Socket Mode over TLS, so the posture is defense in depth:
 
 - Read-only, query-only SQLite connection: mutations fail at the database layer
 - Every table, column, operator, and aggregate is checked against a hardcoded allowlist inside the query builder itself, and every value is bound as a SQL parameter
