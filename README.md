@@ -4,7 +4,7 @@ Socrates is a Slack Q&A bot grounded in a SQLite database of synthetic startup d
 
 ## Watch it in action
 
-![Recordings of socrates replying to queries](https://drive.google.com/drive/folders/1-96tcfa7sApV51Y0AJ4-kOAx9u-yOUX6?usp=sharing)
+[Recordings of socrates replying to queries](https://drive.google.com/drive/folders/1-96tcfa7sApV51Y0AJ4-kOAx9u-yOUX6?usp=sharing)
 
 ## Agent architecture
 
