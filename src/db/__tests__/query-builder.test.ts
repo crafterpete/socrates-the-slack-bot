@@ -2,8 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { describeEntities, describeEntity, queryEntities, searchArtifacts } from "../query-builder.js";
 
-// Exercises query-builder.ts against the real (read-only) synthetic DB — same pattern as the
-// eval scripts under src/eval/, which also query it directly. Run with `npm run eval:test`.
+// Run with `npm run eval:test`.
 
 describe("queryEntities: filters", () => {
   test("eq", () => {
@@ -452,43 +451,116 @@ describe("queryEntities: group_by via (cross-table)", () => {
   });
 });
 
+// Pinned to semantic: false throughout — deterministic BM25-only assertions, unaffected by the
+// live embedding provider. See "searchArtifacts: hybrid" below for fused-ranking coverage.
 describe("searchArtifacts", () => {
-  test("exact_phrase true matches the quoted phrase count", () => {
-    const { rows } = searchArtifacts({ query: "runbook automation", exact_phrase: true, limit: 15 });
+  test("exact_phrase true matches the quoted phrase count", async () => {
+    const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: true, semantic: false, limit: 15 });
     assert.equal(rows.length, 13);
   });
 
-  test("exact_phrase false (bag-of-words) matches a superset", () => {
-    const { rows } = searchArtifacts({ query: "runbook automation", exact_phrase: false, limit: 15 });
+  test("exact_phrase false (bag-of-words) matches a superset", async () => {
+    const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: false, semantic: false, limit: 15 });
     assert.equal(rows.length, 15); // capped at max; the true bag-of-words match count (35) exceeds it
   });
 
-  test("results are ordered by BM25 relevance, best match first", () => {
-    const { rows } = searchArtifacts({ query: "runbook", exact_phrase: false, limit: 5 });
+  test("bag-of-words tolerates FTS5 special characters in the query", async () => {
+    const { rows } = await searchArtifacts({
+      query: "why are our fixes taking so long?",
+      exact_phrase: false,
+      semantic: false,
+      limit: 15,
+    });
+    assert.ok(Array.isArray(rows));
+  });
+
+  test("bag-of-words drops punctuation-only terms instead of AND-killing the query", async () => {
+    const clean = await searchArtifacts({ query: "runbook automation", exact_phrase: false, semantic: false, mode: "count" });
+    const noisy = await searchArtifacts({ query: "runbook - automation", exact_phrase: false, semantic: false, mode: "count" });
+    assert.equal(noisy.rows[0]!.value, clean.rows[0]!.value);
+  });
+
+  test("bag-of-words with no word characters at all matches nothing rather than erroring", async () => {
+    const { rows } = await searchArtifacts({ query: "??? --- !!!", exact_phrase: false, semantic: false, mode: "count" });
+    assert.equal(rows[0]!.value, 0);
+  });
+
+  test("results are ordered by BM25 relevance, best match first", async () => {
+    const { rows } = await searchArtifacts({ query: "runbook", exact_phrase: false, semantic: false, limit: 5 });
     assert.ok(rows.length > 1);
   });
 
-  test("hard-caps at 15 even when a larger limit is requested", () => {
-    const { rows } = searchArtifacts({ query: "runbook", exact_phrase: false, limit: 1000 });
+  test("hard-caps at 15 even when a larger limit is requested", async () => {
+    const { rows } = await searchArtifacts({ query: "runbook", exact_phrase: false, semantic: false, limit: 1000 });
     assert.ok(rows.length <= 15);
   });
 
-  test("mode: count returns an exact total, uncapped by limit", () => {
-    const { rows } = searchArtifacts({ query: "runbook automation", exact_phrase: true, mode: "count" });
+  test("mode: count returns an exact total, uncapped by limit", async () => {
+    const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: true, semantic: false, mode: "count" });
     assert.equal(rows[0]!.value, 13);
   });
 
-  test("mode: count respects filters and exact_phrase like rows mode does", () => {
-    const { rows } = searchArtifacts({ query: "runbook automation", exact_phrase: false, mode: "count" });
+  test("mode: count respects filters and exact_phrase like rows mode does", async () => {
+    const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: false, semantic: false, mode: "count" });
     assert.equal(rows[0]!.value, 35);
   });
 
-  test("filters scope results to one customer", () => {
-    const { rows } = searchArtifacts({
+  test("filters scope results to one customer", async () => {
+    const { rows } = await searchArtifacts({
       query: "search relevance",
       exact_phrase: false,
+      semantic: false,
       filters: { customer_id: "cus_10762173c26d" },
     });
     assert.ok(rows.every((r) => r.customer_id === "cus_10762173c26d"));
+  });
+
+  test("mode: count ignores semantic (always a pure BM25 occurrence count)", async () => {
+    const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: true, semantic: true, mode: "count" });
+    assert.equal(rows[0]!.value, 13);
+  });
+});
+
+describe("searchArtifacts: hybrid", () => {
+  test("semantic: true (default) still returns the exact BM25 phrase match when it's genuinely the best match", async () => {
+    const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: true, limit: 5 });
+    assert.ok(rows.some((r) => r.artifact_id));
+    assert.ok(rows.length > 0);
+  });
+
+  test("finds a paraphrased artifact that shares no keywords with the query", async () => {
+    const query = "customers running out of patience with how long our fixes are taking";
+    const { rows: bm25Only } = await searchArtifacts({ query, exact_phrase: false, semantic: false, limit: 15 });
+    assert.equal(bm25Only.length, 0);
+
+    const { rows: hybrid } = await searchArtifacts({ query, exact_phrase: false, limit: 5 });
+    assert.ok(hybrid.length > 0, "hybrid search should surface results BM25 alone misses");
+  });
+
+  test("respects structured filters on the vector side, not just the BM25 side", async () => {
+    const { rows } = await searchArtifacts({
+      query: "customers running out of patience with how long our fixes are taking",
+      exact_phrase: false,
+      filters: { customer_id: "cus_10762173c26d" },
+      limit: 15,
+    });
+    assert.ok(rows.length > 0);
+    assert.ok(rows.every((r) => r.customer_id === "cus_10762173c26d"));
+  });
+
+  test("vector-only hits (no BM25 match) still get a snippet, falling back to summary", async () => {
+    const { rows } = await searchArtifacts({
+      query: "customers running out of patience with how long our fixes are taking",
+      exact_phrase: false,
+      semantic: true,
+      limit: 15,
+    });
+    assert.ok(rows.every((r) => typeof r.snippet === "string" && (r.snippet as string).length > 0));
+  });
+
+  test("ids are still collected the same way regardless of semantic mode", async () => {
+    const { ids } = await searchArtifacts({ query: "runbook automation", exact_phrase: true, limit: 5 });
+    assert.ok(Array.isArray(ids.artifacts));
+    assert.ok(ids.artifacts!.length > 0);
   });
 });
