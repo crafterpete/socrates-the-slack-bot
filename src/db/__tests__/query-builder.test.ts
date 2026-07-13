@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { describeEntities, describeEntity, queryEntities, searchArtifacts } from "../query-builder.js";
+import { describeEntities, describeEntity, queryEntities, searchArtifacts, SEARCH_LIMIT_MAX } from "../query-builder.js";
 
 describe("queryEntities: filters", () => {
   test("eq", () => {
@@ -457,8 +457,13 @@ describe("searchArtifacts", () => {
   });
 
   test("exact_phrase false (bag-of-words) matches a superset", async () => {
-    const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: false, semantic: false, limit: 20 });
-    assert.equal(rows.length, 20); // capped at max; the true bag-of-words match count (35) exceeds it
+    const { rows } = await searchArtifacts({
+      query: "runbook automation",
+      exact_phrase: false,
+      semantic: false,
+      limit: SEARCH_LIMIT_MAX,
+    });
+    assert.equal(rows.length, SEARCH_LIMIT_MAX); // the true bag-of-words match count (35) exceeds the cap
   });
 
   test("bag-of-words tolerates FTS5 special characters in the query", async () => {
@@ -487,9 +492,33 @@ describe("searchArtifacts", () => {
     assert.ok(rows.length > 1);
   });
 
-  test("hard-caps at 20 even when a larger limit is requested", async () => {
+  test("hard-caps at SEARCH_LIMIT_MAX even when a larger limit is requested", async () => {
     const { rows } = await searchArtifacts({ query: "runbook", exact_phrase: false, semantic: false, limit: 1000 });
-    assert.ok(rows.length <= 20);
+    assert.ok(rows.length <= SEARCH_LIMIT_MAX);
+  });
+
+  test("reports total_matches and truncated when the match set exceeds the limit", async () => {
+    const { rows, total_matches, truncated } = await searchArtifacts({
+      query: "runbook automation",
+      exact_phrase: false,
+      semantic: false,
+      limit: 5,
+    });
+    assert.equal(rows.length, 5);
+    assert.equal(total_matches, 35);
+    assert.equal(truncated, true);
+  });
+
+  test("reports truncated: false when every match fits within the limit", async () => {
+    const { rows, total_matches, truncated } = await searchArtifacts({
+      query: "runbook automation",
+      exact_phrase: true,
+      semantic: false,
+      limit: SEARCH_LIMIT_MAX,
+    });
+    assert.equal(rows.length, 13);
+    assert.equal(total_matches, 13);
+    assert.equal(truncated, false);
   });
 
   test("mode: count returns an exact total, uncapped by limit", async () => {
@@ -576,6 +605,17 @@ describe("searchArtifacts: hybrid", () => {
     });
     assert.ok(rows.length > 0);
     assert.ok(rows.every((r) => r.customer_id === "cus_10762173c26d"));
+  });
+
+  test("hybrid search reports total_matches and truncated from the fused candidate set", async () => {
+    const { rows, total_matches, truncated } = await searchArtifacts({
+      query: "customers running out of patience with how long our fixes are taking",
+      exact_phrase: false,
+      limit: 3,
+    });
+    assert.equal(rows.length, 3);
+    assert.ok((total_matches as number) > 3);
+    assert.equal(truncated, true);
   });
 
   test("a list-valued filter scopes the hybrid search to the listed candidates", async () => {

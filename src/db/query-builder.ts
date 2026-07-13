@@ -75,6 +75,8 @@ export interface SearchArtifactsArgs {
 export interface QueryResult {
   rows: Record<string, unknown>[];
   ids: Record<string, string[]>;
+  total_matches?: number;
+  truncated?: boolean;
 }
 
 // This functions as an allowlist of tables and columns the agent can interact with.
@@ -453,8 +455,8 @@ export function queryEntities(args: QueryEntitiesArgs): QueryResult {
   return { rows: enriched, ids: collectIds(args.entity, enriched) };
 }
 
-export const SEARCH_LIMIT_DEFAULT = 10;
-export const SEARCH_LIMIT_MAX = 20;
+export const SEARCH_LIMIT_DEFAULT = 15;
+export const SEARCH_LIMIT_MAX = 25;
 
 // Top-k window each retrieval side feeds into RRF fusion — wider than the agent-facing limit.
 // Applies to both sides symmetrically: BM25's top hits, and the vector side's nearest neighbors.
@@ -510,7 +512,10 @@ function compileSearchWhere(args: SearchArtifactsArgs): { clause: string; params
   return { clause, params: [matchExpr, ...filterParams] };
 }
 
-async function searchArtifactsHybrid(args: SearchArtifactsArgs, limit: number): Promise<Record<string, unknown>[]> {
+async function searchArtifactsHybrid(
+  args: SearchArtifactsArgs,
+  limit: number,
+): Promise<{ rows: Record<string, unknown>[]; totalMatches: number }> {
   const db = getDatabase();
 
   const { clause: bm25Clause, params: bm25Params } = compileSearchWhere(args);
@@ -531,7 +536,11 @@ async function searchArtifactsHybrid(args: SearchArtifactsArgs, limit: number): 
       .map((r) => [r.artifactId, r.rank]),
   );
 
+  // Every candidate either side surfaced, before the limit slice. A soft floor on the true match
+  // count: each side's window caps at CANDIDATE_POOL_SIZE, so broad topics read as "60+", not an
+  // exact corpus-wide total. Still enough signal to distinguish a handful from a pervasive pattern.
   const candidateIds = new Set<string>([...rankBm25.keys(), ...rankVec.keys()]);
+  const totalMatches = candidateIds.size;
   const fused = [...candidateIds]
     .map((id) => {
       const rb = rankBm25.get(id);
@@ -542,7 +551,7 @@ async function searchArtifactsHybrid(args: SearchArtifactsArgs, limit: number): 
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 
-  if (!fused.length) return [];
+  if (!fused.length) return { rows: [], totalMatches };
 
   const displayRows = db
     .prepare(
@@ -567,7 +576,7 @@ async function searchArtifactsHybrid(args: SearchArtifactsArgs, limit: number): 
   }
 
   // Vector-only hits never had an FTS match, so snippet() can't run — fall back to summary.
-  return fused.map((f) => {
+  const rows = fused.map((f) => {
     const row = displayById.get(f.id)!;
     return {
       artifact_id: row.artifact_id,
@@ -580,6 +589,7 @@ async function searchArtifactsHybrid(args: SearchArtifactsArgs, limit: number): 
       snippet: snippetById.get(f.id) ?? String(row.summary),
     };
   });
+  return { rows, totalMatches };
 }
 
 export async function searchArtifacts(args: SearchArtifactsArgs): Promise<QueryResult> {
@@ -595,6 +605,7 @@ export async function searchArtifacts(args: SearchArtifactsArgs): Promise<QueryR
   }
 
   let rows: Record<string, unknown>[];
+  let totalMatches: number;
   if (args.semantic === false) {
     const { clause, params } = compileSearchWhere(args);
     const sql = `
@@ -604,10 +615,17 @@ export async function searchArtifacts(args: SearchArtifactsArgs): Promise<QueryR
       ${clause}
       ORDER BY rank LIMIT ?`;
     rows = db.prepare(sql).all(...params, limit) as Record<string, unknown>[];
+    const countSql = `SELECT COUNT(*) AS value FROM artifacts_fts f JOIN artifacts a ON a.artifact_id = f.artifact_id ${clause}`;
+    totalMatches = (db.prepare(countSql).get(...params) as { value: number }).value;
   } else {
-    rows = await searchArtifactsHybrid(args, limit);
+    ({ rows, totalMatches } = await searchArtifactsHybrid(args, limit));
   }
 
   const enriched = enrichRows("artifacts", rows);
-  return { rows: enriched, ids: collectIds("artifacts", enriched) };
+  return {
+    rows: enriched,
+    ids: collectIds("artifacts", enriched),
+    total_matches: totalMatches,
+    truncated: totalMatches > enriched.length,
+  };
 }

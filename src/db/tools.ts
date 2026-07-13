@@ -154,8 +154,11 @@ export const databaseTools = [
       "for open-ended topic questions, not exact-match lookups. Filters scope the search (e.g. " +
       "customer_id from a prior query_entities call). Id filters accept a list: scan a known candidate " +
       "set (e.g. every ANZ customer) with one call at max `limit`, not one search per id, unless you " +
-      "need each candidate's top matches individually. For \"how many artifacts mention X\" questions, " +
-      "use mode \"count\" rather than counting returned rows.",
+      "need each candidate's top matches individually. Results include `total_matches` and `truncated`: " +
+      "when `truncated` is true, the rows are only the top slice of a larger matching set, so never " +
+      "describe the pattern as small or exhaustive from the rows alone; quantify with `total_matches` " +
+      "(\"at least N\") or follow up with a narrower search. For \"how many artifacts mention X\" " +
+      "questions, use mode \"count\" rather than counting returned rows.",
     schema: searchArtifactsSchema,
   }),
 ];

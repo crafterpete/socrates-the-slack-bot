@@ -1,8 +1,54 @@
 Ongoing design Log
 
+## v3: Multi-turn queries and memory management
+Since we want multiple turn conversations and history, we'll need to pipe slack messages into the agent's context window.
+
+For the purposes of this app, I'll treat each new slack thread as a new conversation. Users (like me) want to be able to control when I start fresh, and slack threads are a clear delineation for that. 
+
+We could pipe the entire slack thread into the agent's context, but for long-running conversations (imagine >100 messages), this leads to context bloat (less reliable outputs and $$$ expensive).
+
+
+
+
 
 ## v2: Semantic search
+As mentioned in the previous section, our agent is currently struggling with complex semantic-leaning questions. It tends to brute force its results by calling many different keyword searches, reaching the tool-calling limit. In particular, the agent was stalling out and changing its keywords to find the correct artifacts.
 
+So let's see if we can improve that with semantic search directly on artifacts. We'll need to convert artifacts into embeddings.
+
+Normally, I'd use Pinecone or pgvector, but since this dataset is so small, I'll just store the embeddings in a local file (`artifact_embeddings.bin`). We could use sqlite-vec, but the local file approach is easier @250 rows.
+
+With these embeddings, we have a few different approaches to semantic search: 
+**A. Give the agent semantic search as a separate tool**
+**B. Set up a deterministic pipeline for semantic search for every tool call**
+**C. Embed semantic search inside of `searchArtifacts` which functionally turns it into a hybrid search tool** (we'd use RRF to reconcile the BM25 + semantic rankings)
+
+Normally, hybrid search tools are good because they a. reduce the surface area for an agent to make mistakes (1 tool call vs 2) and b. expands recall breadth (the agent might not realize that there are relevant artifacts based on semantic meaning, but those artifacts are surfaced anyways). 
+
+But it can also diminish precision (irrelevant semantic meaning might be attached to an otherwords standard keyword search)
+
+I'm opting for C, with an option for the agent to turn off the extra semantic search (but it'll be discouraged from doing so, outside of 1 word lookups).
+
+The mechanics of this search are simple:
+
+User Query --> Agent defines search query --> tool call --> query embedded via openai call --> cosine similarity search against artifact vector --> Top-k vectors are reconciled with Top-k keyword-search via RRF --> ranked artifacts returned back to agent.
+
+
+With this, the agent can lean more heavily on semantic meaning. As expected, it performs much better on recall, precision, and the tool count. 
+
+![Before](eval_reports/v2/v2-semantic-queries-before.jpg)
+
+![After](eval_reports/v2/v2-semantic-queries-after.jpg)
+
+Before these changes, 2/5 of our semantic queries hit the tool-cap limit. Recall and precision were also extremely low.
+
+Now, none of the semantic eval queries exceed 3 tool calls, and recall is much higher (since more artifacts are surfaced).
+
+However, the agent still struggles with recall for semantic queries that require a wide evidence base (`gold_semantic_02` recall was at 18% despite precision at 64%). I believe the problem here is that the agent is given a lot of context, and has reasonably high confidence that its answer is good enough, without knowing that there's other useful information available.
+
+I think two directions we could take to improve this are: 
+- **Focus on precision**: Our precision on these semantic queries aren't very high. This leads to us missing other relevant information because the top-k outputs are imprecise. Some things we can do here: steer the agent's semantic querying pattern, experiment with how we're scoring and chunking the artifact vectors, revisit our hybrid search approach.
+- **Let the agent know about relevant results beyond top-k**: We currently return some top-k results for the agent. Sometimes there are other relevant results that are further down the set. Nudging the agent to look for them is a bit brute-forcey, but should improve recall at the cost of precision & context bloat.
 
 
 ## v1: Initial Slack Bot + Sql Tooling
@@ -60,13 +106,13 @@ For our SQL tools, we'll be establishing a `query_only` SQLite connection. We ne
 
 Our Slack bot will have access to three SQL tools:
 
-- `describe_entities`: Gives the agent the exact shape of the tables it's looking for so it knows how to select columns. This is a stub derived from our in-code ENTITY_SCHEMA. No SQL is actually run here, but it's here instead of always giving the entire schema to the agent to manage context poisoning.
+- `describe_entities`: Gives the agent the exact shape of the tables it's looking for so it knows how to select columns. Table and Column information is derived from the in-code ENTITY_SCHEMA (which functions as an allowlist of tables + columns the agent can use). This tool also provides the agent with enum shapes (which runs SQL) of columns.
 - `query_entities`: A generalized SQL querying tool that enables the agent to pass in a broad suite of parameters (table, columns to select, aggregation metrics).
 - `search_artifacts`: A keyword search tool that uses SQLite's BM25 pattern (FTS5) to search on the artifacts fts table. This is ranked by relevance.
 
 Two call outs on these tools: 
 
-**A. I've disabled joins.** If the agent needs to make queries across multiple tables, it'll need to make multiple tool calls. This is mostly to remove a common failure pattern (bad joins can really mess up row counts) at the cost of an extra tool hop. 
+**A. I've disabled joins.** If the agent needs to make queries across multiple tables, it'll need to make multiple tool calls. This is mostly to remove a common failure pattern (bad joins can mess up row counts; joins are inherently hard) at the cost of an extra tool hop. 
 
 I expect the agent to use joins to answer questions that require multiple tables. This probably fits in 3 buckets: 
 
@@ -82,12 +128,20 @@ We can mitigate some of this by allowing the SQL tool to make some joins, on beh
 - Single-hop joins for names where a result contains an ID
 - Single-hop many-to-one aggregation queries based on foreign_key to primary_key pairs
 
-Many-hop aggregation queries will still be inefficient here, but they might also not be necessary.
+Many-hop aggregation queries will still be inefficient here, but I couldn't come up with an example of a 3+ hop aggregation query so I don't think it's necessary. In production, I'd expose additional tooling if this were a common real world access pattern.
 
 **B. search_artifacts is bound to a limit between 15 and 25 items**. This is a relatively high threshold.
 
 Tool call limit: I'm also enforcing an 8 tool-call cap per query. I expect this to fail many of our more complex queries, and this will help inform our next iteration.
 
+### Tool auth
+Right now, since the slackbot is being used by trusted individuals (people added a slack channel, primarily me) and the tools are predefined and the db layer only ever allows for read-only and query-only behavior, I don't think we need to go overboard on auth. These tools are designed for this agent to use.
+
+However, I've gone ahead and stubbed user-auth to each tool call. Each time a user sends a slack message, slack provides us with the user_id, thread_id, channel_id. I've wired that context through to each tool, and stubbed out `authorize` and `audit`. 
+
+In an actual production system, I'd wire this up authorize to some LDAP / permissions system to decide if the user is auhtorized to trigger a given tool. 
+
+Similarly, in a production system, the logs of each tool call would be emitted to some logging infra (Splunk, Datadog, etc).
 
 ### Gaps in our V1 agent armed with SQL querying, single-hop aggregation, and BM25 search tools
 
@@ -120,7 +174,6 @@ So before I begin, I'd like to first define some ground truth samples. As we ite
 ### What evals do we care about?
 
 Answer Evals: 
-
 - End-to-end quality (A|Q)
 - Faithfulness (A|C) - useful for hallucination calculation
 
@@ -138,19 +191,19 @@ Performance Evals:
 - How many loops did the agent do? 
 - How often does the agent trigger the hard loop-cap?
 
-(Later on): Trajectory Evals:
-
+(Later on, if we get there): Trajectory Evals:
 - Which tools did the agent call? In what order?
 
-Data sets: 
-
-- Golden set (hand curated by me ~40 query and answer samples, intended to stress test the system)
-- Adversarial set to test malicious inputs, intended failure
-
+Golden Eval Set will comprise of: 
+- Simple deterministic queries
+- Adversarial queries (injection, jailbreak, no data)
+- Semantically challenging queries
+- Multi-table join/aggregation queries
+- Sample queries from requirements
 
 ### Creating the golden set
 
-I'll start by taxonomizing the user access patterns, and annotate different fields to pass into an LLM
+I'll start by taxonomizing the user access patterns, and annotate different fields to pass into an LLM. See EVALS.MD for the full taxonomy of this golden set.
 
 #### User query behaviors (request_type):
 
@@ -159,7 +212,6 @@ I'll start by taxonomizing the user access patterns, and annotate different fiel
 - Single entity analysis (for this specific xyz, please tell me your read)
 - Multi-entity analysis (which companies experienced abc pain ponts? Which ones are most likely to churn)
 - Multi-turn queries (earlier in the conversation, we talked about xyz company; latest user message now just says "Tell me about their business model")
-
 
 
 #### Query patterns (query_type):
@@ -204,3 +256,5 @@ Test against potential failure modes:
   - Disguised prompt injection
 - System prompt discovery
 - Irrelevance (Kanye west's birthday...)
+
+See @EVALS.md for the in-depth evals design.

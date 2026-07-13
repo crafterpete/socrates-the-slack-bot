@@ -42,15 +42,26 @@ Two things behave automatically so the model doesn't have to remember syntax:
 
 ### `search_artifacts`
 
-Full-text search over artifact titles/summaries/content (customer calls, support tickets, competitor reports, internal docs), ranked by relevance (BM25).
+Hybrid search over artifact titles/summaries/content (customer calls, support tickets, competitor reports, internal docs). Each query runs two retrieval passes: a BM25 keyword match against the FTS5 table, and a semantic pass that embeds the query (OpenAI) and ranks artifacts by cosine similarity against precomputed artifact embeddings. The two rankings are fused with Reciprocal Rank Fusion (`RRF_K = 60`, Elasticsearch's default), so relevant artifacts surface even when their wording differs from the query.
+
+Each side feeds only its top 30 candidates (`CANDIDATE_POOL_SIZE`) into the fusion. An artifact outside a side's top 30 gets no credit from that side, so each pass can abstain on candidates it ranks poorly instead of every filtered row collecting residual score.
+
+The artifact embeddings live in a local sidecar file (`src/db/artifact_embeddings.bin` plus a manifest), rebuilt with `npm run db:build-embeddings`. Content fingerprints are checked against the live DB on load, so a stale sidecar fails loudly instead of silently ranking against drifted content.
 
 | Param | Notes |
 |---|---|
 | `query` | Search text |
-| `exact_phrase` | Default `true` (exact phrase match); `false` matches rows containing all the words in any order |
-| `filters` | Optional `customer_id`, `product_id`, `competitor_id`, `artifact_type`, `created_after`, `created_before` |
-| `mode` | `"rows"` (default, ranked top-k) or `"count"`. Use `count` for "how many artifacts mention X" questions, since `rows` results are capped |
-| `limit` | Default 5, max 15 (rows mode only) |
+| `semantic` | Default `true` (hybrid). `false` runs pure BM25, meant only for literal exact-term lookups (e.g. an id-like token) |
+| `exact_phrase` | Default `true` (exact phrase match); `false` matches rows containing all the words in any order. BM25 side only |
+| `filters` | Optional `customer_id`, `product_id`, `competitor_id`, `artifact_type` (each takes a single value or a list, matched as SQL IN), plus `created_after` / `created_before` |
+| `mode` | `"rows"` (default, fused top-k) or `"count"`. Use `count` for "how many artifacts mention X" questions, since `rows` results are capped |
+| `limit` | Default 15, max 25 (rows mode only). List filters pair well with the max, so every candidate in a scanned set can surface its best match |
+
+Three behaviors worth knowing:
+
+- **Filters scope both sides.** BM25 applies them in SQL; the vector side only ranks artifacts that pass the structured filters. A `customer_id` list means one search call can scan a whole candidate set instead of one call per id.
+- **`count` mode is always pure BM25.** Cosine similarity has no match/no-match threshold, so there's nothing principled to count on the semantic side. Counts are exact keyword-occurrence counts.
+- **Snippets fall back to summaries.** Rows that matched on keywords return the BM25 match window as their snippet. Rows surfaced only by the vector side never had an FTS match, so `snippet()` can't run and the artifact's summary is returned instead.
 
 ### Safety
 
@@ -58,3 +69,12 @@ Full-text search over artifact titles/summaries/content (customer calls, support
 - Every filter value is bound as a SQL parameter, never string-interpolated.
 - The database connection is read-only (`PRAGMA query_only = ON`) as a backstop.
 - The agent is capped at 8 tool calls per question; once hit, it must answer (or abstain) with whatever it's already gathered instead of continuing indefinitely.
+
+## Tool gateway (auth + audit)
+
+The agent never binds the raw tools. `withToolGateway` (`src/agent/gateway.ts`) wraps each one, and every call the model makes passes through the wrapper. The split is deliberate: the LLM only ever picks a tool name and arguments; trusted code decides whether that call runs and records that it did.
+
+- **Request context.** Each Slack message's user id, channel, and thread ts get attached to the agent run (`requestConfig`) and travel through the LangGraph config to every tool call in that run. The model never sees or supplies identity; it rides alongside the conversation, not inside it.
+- **`authorize(context, toolName, args)`.** Stubbed today: everyone can run everything, which is fine while the tools are read-only and the users are trusted channel members. Throwing from it denies the call, and the error text is surfaced to the model so it can tell the user. In a production system this would consult a real permissions layer, and the interesting checks are argument-level (constraining which rows a user's queries may touch), not just tool-level.
+- **Audit.** One structured JSON line per call: user, channel, tool, args, row count, duration, and the error if one was thrown. In production these would ship to logging infra (Splunk, Datadog); locally they go to stdout.
+- **Internal callers bypass it.** Calls carrying no request context (the eval harness, unit tests) run the tool untouched and unaudited. Only requests that arrived through Slack get authorized and logged.

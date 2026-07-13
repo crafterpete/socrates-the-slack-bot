@@ -21,15 +21,15 @@ Project planning
 
 
 Things to consider
-- Eval suite (NOT DONE)
+- Eval suite (DONE)
     - Multi-turn: is the query the user input vs user input + compacted memory vs user input + entire memory
     - Human feedback (thumbs up vs thumbs down) for data set
 - Security, guardrails, and malicious inputs (NOT DONE)
-- Authentication and authorization:
+- Authentication and authorization (DONE)
     - Messages should be constrained to user xyz & same with convo history
-- Searching mechanism (NOT DONE)
+- Searching mechanism (DONE)
     - Vector vs BM25 vs hybrid
     - Agency level (deterministic pipeline vs agent-defined parameters w/ predefined tools vs more open-ended agent querying)
-- Memory management
+- Memory management (DONE)
     - Entire history vs compaction + recent history vs longer term memories (episodic; running log & pointers)
-- Decide how to handle slack threads (entire thread history is included? or compacted?)
+- Decide how to handle slack threads (entire thread history is included? or compacted?) (DONE)
