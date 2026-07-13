@@ -14,7 +14,6 @@ This doc is the bird's-eye view. The details live in:
 - `DESIGN.md`: the build log, version by version, with the reasoning behind each decision
 - `TOOLS.md`: the tool contracts (params, behaviors, safety)
 - `EVALS.md`: the eval suite design and taxonomy
-- `SETUP.md`: how to run it
 
 ## How a question flows through the system
 
