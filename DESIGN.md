@@ -6,35 +6,39 @@ It's armed with parameterized, secure search tools for SQL search, BM25 search, 
 See: @/eval_reports/final_eval_report.html
 ![Final eval snippet](eval_reports/final-eval-snippet.jpg)
 
-Between v0 and our latest iteration, we've raised our recall (~60% -> ~80%), precision (~42% -> ~60%), and MRR (~0.5 -> ~0.8). Our semantic & complex query answers are also much more accurate (the deterministic tests were already performing well). We've reduced the number of tool calls required (none >6 in our suite, even with parallel tool calling enabled). 
+Between v0 and our latest iteration, we've raised our recall (60% -> 80%), precision (42% -> 60%), and MRR (0.5 -> 0.8). Our semantic & complex query answers are also much more accurate (the deterministic tests were already performing well). We've reduced the number of tool calls required (none > 6 in our suite, even with parallel tool calling enabled). 
 
 So what's next? Some things that I wish I got to, but ran out of time: 
+
 - Overall pass/fail rates are pretty good, but both recall and precision can be improved
 - Implementing an LLM as a judge on the eval suite (this will be useful to automatically score the more complex queries)
 - Using that LLM judge to experiment with an adversarial agent to refine the quality of each output
 - Since our deterministic queries were already performing extremely well, I would've liked to experiment with a router based model (where a classifier kicks off different calls to different LLM tiers). I'd bet that cheaper models can still answer the easy queries (deterministic evals in our golden set) at a very high success rate.
 - It would've been interesting to test the discriminator against the adversarial eval suite.
 
-
 ## v5: Security and guardrails
+
 Security is, broadly speaking, a full stack concern. LLM inputs and outputs are notoriously difficult to manage, and input sanitization isn't enough (users can disguise inputs or attempt to inject seemingly safe data to be saved to a db for a downstream attack). 
 
 Fortunately, the Socrates app will largely be used by a trusted audience (people added to a slack channel) and is connected to Slack via websocket (not exposed to public http traffic).
 
 Furthermore, the app has these safety mechanisms implemented in prior versions: 
-- `read_only` & `query_only` settings on SQLite db: protects against mutations & sql injections
+
+- `readonly` & `query_only` settings on SQLite db: protects against mutations & sql injections
 - Tools are explicitly defined and parameterized (rather than a broad sql writing tool)
-- Querying tbales themselves operate on an allowlist (`ENTITY_SCHEMA`)
+- Querying tables themselves operate on an allowlist (`ENTITY_SCHEMA`)
 - We set a hard tool-call cap to bound runaway loops
 - An adversarial portion of our eval test-suite
 - User input normalization with a max input length (`normalizeUserInput`)
 - A stub for `authorize` that's designed for LDAP systems and user permissions (leaving out of scope for this project)
 
-For this v5, I've added a two items not previously implemented: 
-- Input bounds for `searchArtifacts` queries (500 characters)
-- A log-only classifier at the `handleUserQuestion` level. This cheap (haiku) classifier logs either "on_topic", "off_topic", or "injection_attempt". I don't have the time remaining to rigorously test this classifier w/ a meaningful eval suite to put it in the critical path, but that would be next on my list of things to do. 
+For this v5, I've added two items not previously implemented: 
+
+- Input bounds (500 char for queries, 200 char for filters, 50 items for id-list filters) for `searchArtifacts`
+- A log-only classifier at the `handleUserQuestion` level. This cheap (haiku) classifier logs either "on_topic", "off_topic", or "injection_attempt". I don't have the time remaining to rigorously test this classifier w/ a meaningful eval suite to put it in the critical path, but that would be next on my list of things to do.
 
 ## v4: A more friendly slack bot & live feedback
+
 Now, as mentioned in the core requirements file, agents can take a while to run, so we'll want the user to know that Socrates has seen the message and is working on it.
 
 ![Socrates acknowledges your questions.](eval_reports/v4/v4-a-friendly-philosopher.jpg)
@@ -43,13 +47,14 @@ Now, as mentioned in the core requirements file, agents can take a while to run,
 
 In my test cases so far, it's never been more than a couple seconds of runtime, and I've hard-capped the max-tool-call limit to 8. So I don't think latency is likely to stretch very long. Having said that, Socrates updates the user every second (to respect Slack's rate limit) with the number of tool calls it's done so far. 
 
-Separately, what if we want to receive live feedback for from Socrates to inform our regression tests and eval suite? Well, the good news is that we can now give Socrates live feedback: 
+Separately, what if we want Socrates to receive live feedback to inform our regression tests and eval suite? Well, the good news is that we can now give Socrates live feedback: 
 
 ![Providing socrates with feedback](eval_reports/v4/v4-thumbs-up-feedback.jpg)
 
 ![Now saves to a db to inform future evals and regression tests](eval_reports/v4/v4-feedback-db.jpg)
 
 ## v3: Multi-turn queries and memory management
+
 Since we want multiple turn conversations and history, we'll need to pipe slack messages into the agent's context window.
 
 For the purposes of this app, each new slack thread is a new conversation. Users (like me) want to be able to control when they start fresh, and slack threads are a clear delineation for that. 
@@ -62,20 +67,22 @@ Now whenever Socrates (our chatbot) is asked "Tell me more about that", it'll kn
 
 ![Socrates can answer ambiguously worded questions about previous messages](eval_reports/v3/v3-multiturn-queries-supported.jpg)
 
-Now I know what you're thinking: what about messages that don't tag the Slack bot, and the slack bot gets brought in as an arbiter? 
+Now I know what you're thinking: what about messages that don't tag the Slack bot, and the slack bot only gets brought in later? 
 
-Whenever the slack bot is tagged into a thread, it'll follow the same thresholds mentioned above and save that thread history and feed that information to the agent. 
+Whenever the slack bot is tagged into a thread, it'll follow the same message history thresholds + compaction constraints mentioned above and save that thread history, then it'll execute on the user's query. 
 
 Conversations in threads with our Slack Bot tagged are passively saved into the thread-store db. 
 
 ![Socrates only runs + replies when it's tagged.](eval_reports/v3/v3-sandwiched-conversation.jpg)
 
 Other forms of memory could be relevant but I'm leaving out of scope for this project: 
+
 - Organizational memory (memories about the organization's preferences or tendencies)
 - Inter-thread memory (memories across conversations; say: if you wanted a cache of frequent recently asked questions)
-- User-specific memory (memories that pertain about a specific user; like their preferences)
+- User-specific memory (memories that pertain to a specific user; like their preferences)
 
 ## v2: Semantic search
+
 As mentioned in the previous section, our agent is currently struggling with complex semantic-leaning questions. It tends to brute force its results by calling many different keyword searches, reaching the tool-calling limit. In particular, the agent was stalling out and changing its keywords to find the correct artifacts.
 
 So let's see if we can improve that with semantic search directly on artifacts. We'll need to convert artifacts into embeddings.
@@ -85,11 +92,11 @@ Normally, I'd use Pinecone or pgvector, but since this dataset is so small, I'll
 With these embeddings, we have a few different approaches to semantic search: 
 **A. Give the agent semantic search as a separate tool**
 **B. Set up a deterministic pipeline for semantic search for every tool call**
-**C. Embed semantic search inside of `searchArtifacts` which functionally turns it into a hybrid search tool** (we'd use RRF to reconcile the BM25 + semantic rankings)
+**C. Embed semantic search inside of** `searchArtifacts` **which functionally turns it into a hybrid search tool** (we'd use RRF to reconcile the BM25 + semantic rankings)
 
-Normally, hybrid search tools are good because they a. reduce the surface area for an agent to make mistakes (1 tool call vs 2) and b. expands recall breadth (the agent might not realize that there are relevant artifacts based on semantic meaning, but those artifacts are surfaced anyways). 
+Normally, hybrid search tools are good because they a. reduce the surface area for an agent to make mistakes (1 tool call vs 2) and b. expand recall breadth (the agent might not realize that there are relevant artifacts based on semantic meaning, but those artifacts are surfaced anyways). 
 
-But it can also diminish precision (irrelevant semantic meaning might be attached to an otherwords standard keyword search)
+But it can also diminish precision (irrelevant semantic meaning might be attached to an otherwise standard keyword search)
 
 I'm opting for C, with an option for the agent to turn off the extra semantic search (but it'll be discouraged from doing so, outside of 1 word lookups).
 
@@ -110,7 +117,8 @@ Now, none of the semantic eval queries exceed 3 tool calls, and recall is much h
 However, the agent still struggles with recall for semantic queries that require a wide evidence base (`gold_semantic_02` recall was at 18% despite precision at 64%). I believe the problem here is that the agent is given a lot of context, and has reasonably high confidence that its answer is good enough, without knowing that there's other useful information available.
 
 I think two directions we could take to improve this are: 
-- **Focus on precision**: Our precision on these semantic queries aren't very high. This leads to us missing other relevant information because the top-k outputs are imprecise. Some things we can do here: steer the agent's semantic querying pattern, experiment with how we're scoring and chunking the artifact vectors, revisit our hybrid search approach.
+
+- **Focus on precision**: Our precision on these semantic queries isn't very high. This leads to us missing other relevant information because the top-k outputs are imprecise. Some things we can do here: steer the agent's semantic querying pattern, experiment with how we're scoring and chunking the artifact vectors, revisit our hybrid search approach.
 - **Let the agent know about relevant results beyond top-k**: We currently return some top-k results for the agent. Sometimes there are other relevant results that are further down the set. Nudging the agent to look for them is a bit brute-forcey, but should improve recall at the cost of precision & context bloat.
 
 One thing I experimented with was giving the agent the ability to use facets in its `search_artifacts` tool, which gives us a better outline / shape for its search results (grouped by whichever facet columns it cares about.) However, the eval outputs were largely unchanged.
@@ -139,15 +147,17 @@ const graph = new StateGraph(MessagesAnnotation)
 
 ### Slackbot authenticating requests
 
-- I'm opting to host this slack bot locally, rather than kick it up into a server. As a result, the server will connect to slack via a websocket, using Socket mode. This allows us to avoid exposing a public HTTP endpoint. The Socket Mode connection is secure because it's a TLS encrypted connection authenticated by our app token.
+- I'm opting to host this slack bot locally, rather than kick it up into a server. As a result, the server will connect to slack via a websocket, using Socket Mode. This allows us to avoid exposing a public HTTP endpoint. The Socket Mode connection is secure because it's a TLS encrypted connection authenticated by our app token.
 - We'll maintain the `SLACK_APP_TOKEN`, which is used to open up the websocket (bolt will use it to create the connection) and the `SLACK_BOT_TOKEN` (which scopes the bot's permissions, and used to write events to slack) in our .env file.
 - I don't think hosting this on the web & exposing a webhook is necessary. But if we had to, we need to validate inbound requests into the webhook via Slack's signing key.
+
+
 
 ### Initial benchmark (free-form sql)
 
 Eventually, we'll want our slackbot to choose amongst a collection of tools.
 
-For this V1, we'll focus on SQL search tooling, but I'd like to eventually expand this to include semantic search (via vector db). SqlLite has a built-in BM25 structure (FTS5 ranking), so we should be able to leverage this.
+For this V1, we'll focus on SQL search tooling, but I'd like to eventually expand this to include semantic search (via vector db). SQLite has a built-in BM25 structure (FTS5 ranking), so we should be able to leverage this.
 
 First, I want to benchmark the agent armed with a generic `run_sql` tool to have a control-sample on how an agent performs with maximal tooling flexibility.
 
@@ -159,7 +169,7 @@ Our precision was interestingly quite low. One culprit is that the agent makes m
 Giving the agent a generic `run_sql` tool is generally a bad idea because: 
 
 - There's a big security risk to allow an llm to create free-form sql. (Johnny drop tables; sql injection attacks)
-- LLMs can make mistakes in their SQL writing that can reduce precision & recall. As seen in the report, none of the FTS5 queries actually ordered by RRank
+- LLMs can make mistakes in their SQL writing that can reduce precision & recall. As seen in the report, none of the FTS5 queries actually ordered by rank
 - Giving the LLMs scaffolded tooling reduces the surface-area for mistakes.
 
 So we'll want to define more structured tools.
@@ -186,9 +196,10 @@ I expect the agent to use joins to answer questions that require multiple tables
 
 Chained filtering and cross-table field lookups should work via sequential calls.
 
-Cross-table aggregation will break though because `group by` statements accumulate rows from one table into multiple groups based on another table. 
+Cross-table aggregation will break because `group by` statements accumulate rows from one table into multiple groups based on another table. 
 
 We can mitigate some of this by allowing the SQL tool to make some joins, on behalf of the agent. But only a specific set. To start with:
+
 - Single-hop joins for names where a result contains an ID
 - Single-hop many-to-one aggregation queries based on foreign_key to primary_key pairs
 
@@ -199,11 +210,12 @@ Many-hop aggregation queries will still be inefficient here, but I couldn't come
 Tool call limit: I'm also enforcing an 8 tool-call cap per query. I expect this to fail many of our more complex queries, and this will help inform our next iteration.
 
 ### Tool auth
-Right now, since the slackbot is being used by trusted individuals (people added a slack channel, primarily me) and the tools are predefined and the db layer only ever allows for read-only and query-only behavior, I don't think we need to go overboard on auth. These tools are designed for this agent to use.
+
+Right now, since the slackbot is being used by trusted individuals (people added to a slack channel, primarily me) and the tools are predefined and the db layer only ever allows for read-only and query-only behavior, I don't think we need to go overboard on auth. These tools are designed for this agent to use.
 
 However, I've gone ahead and stubbed user-auth to each tool call. Each time a user sends a slack message, slack provides us with the user_id, thread_id, channel_id. I've wired that context through to each tool, and stubbed out `authorize` and `audit`. 
 
-In an actual production system, I'd wire this up authorize to some LDAP / permissions system to decide if the user is auhtorized to trigger a given tool. 
+In an actual production system, I'd wire up `authorize` to some LDAP / permissions system to decide if the user is auhtorized to trigger a given tool. 
 
 Similarly, in a production system, the logs of each tool call would be emitted to some logging infra (Splunk, Datadog, etc).
 
@@ -238,6 +250,7 @@ So before I begin, I'd like to first define some ground truth samples. As we ite
 ### What evals do we care about?
 
 Answer Evals: 
+
 - End-to-end quality (A|Q)
 - Faithfulness (A|C) - useful for hallucination calculation
 
@@ -256,9 +269,10 @@ Performance Evals:
 - How often does the agent trigger the hard loop-cap?
 
 (Later on, if we get there): Trajectory Evals:
+
 - Which tools did the agent call? In what order?
 
-Golden Eval Set will comprise of: 
+Golden Eval Set will comprise: 
 - Simple deterministic queries
 - Adversarial queries (injection, jailbreak, no data)
 - Semantically challenging queries
@@ -267,15 +281,16 @@ Golden Eval Set will comprise of:
 
 ### Creating the golden set
 
-I'll start by taxonomizing the user access patterns, and annotate different fields to pass into an LLM. See EVALS.MD for the full taxonomy of this golden set.
+I'll start by taxonomizing the user access patterns, and annotate different fields to pass into an LLM. See @EVALS.md for the full taxonomy of this golden set.
 
 #### User query behaviors (request_type):
 
 - Summaries (summarize these events)
 - Simple episodic recall (what happened on xyz date)
 - Single entity analysis (for this specific xyz, please tell me your read)
-- Multi-entity analysis (which companies experienced abc pain ponts? Which ones are most likely to churn)
+- Multi-entity analysis (which companies experienced abc pain points? Which ones are most likely to churn)
 - Multi-turn queries (earlier in the conversation, we talked about xyz company; latest user message now just says "Tell me about their business model")
+
 
 
 #### Query patterns (query_type):
@@ -283,12 +298,12 @@ I'll start by taxonomizing the user access patterns, and annotate different fiel
 Detailing some possible query patterns that we can expect. This behavior pattern will inform both our synthetic eval generation and our tooling. 
 
 Simple queries (directly queryable with sql filters like WHERE, LIKE)
-    - Questions about specific entities in a specific table (employees, products, scenarios, customers...) (How many employees does Maple River Regional Bank have?)
-    - Questions that address time frames ("What were my customer calls yesterday")
+- Questions about specific entities in a specific table (employees, products, scenarios, customers...) (How many employees does Maple River Regional Bank have?)
+- Questions that address time frames ("What were my customer calls yesterday")
 
 Semantic queries (Driven on meaning)
-    - Queries driven based on meaning (ie: "what are the most common pain points that customers experience?", "give me the most challenging sales calls we've had so far"): traditional sql will be inadequate for these queries
-    - Starting out, I expect a lot of semantic queries to fail with purely sql tooling (or a lot of extraneous queries / context bloat).
+- Queries driven based on meaning (ie: "what are the most common pain points that customers experience?", "give me the most challenging sales calls we've had so far"): traditional sql will be inadequate for these queries
+- Starting out, I expect a lot of semantic queries to fail with purely sql tooling (or a lot of extraneous queries / context bloat).
 
 Complex queries: 
     - Multi-step queries: Questions that will require multiple sql searches ("Out of all customers > 500 employees based in California, could you summarize the conversations we've had with each one over the past three weeks where there was obvious FUD?")
@@ -321,4 +336,4 @@ Test against potential failure modes:
 - System prompt discovery
 - Irrelevance (Kanye west's birthday...)
 
-See @EVALS.md for the in-depth evals design.
+See @EVALS.md for the latest in-depth evals design.
