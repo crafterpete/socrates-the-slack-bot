@@ -30,6 +30,15 @@ function splitList(text: string): string[] {
     .filter(Boolean);
 }
 
+function isNonDecreasing(xs: number[]): boolean {
+  for (let i = 1; i < xs.length; i++) {
+    const prev = xs[i - 1] ?? Number.NEGATIVE_INFINITY;
+    const cur = xs[i] ?? Number.POSITIVE_INFINITY;
+    if (prev > cur) return false;
+  }
+  return true;
+}
+
 // Leading token is decisive (system prompt asks for a leading Yes/No); cue regexes are a fallback.
 function detectPolarity(resp: string): boolean | null {
   const s = resp.trim().toLowerCase();
@@ -93,7 +102,7 @@ export function scoreAnswer(rec: GoldenRecord, response: string): AnswerScore {
       const items = splitList(rec.answer);
       const idxs = items.map((i) => resp.lastIndexOf(norm(i)));
       const allPresent = idxs.every((i) => i >= 0);
-      const ordered = allPresent && idxs.every((v, k) => k === 0 || idxs[k - 1]! <= v);
+      const ordered = allPresent && isNonDecreasing(idxs);
       return mk(
         allPresent && ordered,
         !allPresent ? "missing items" : ordered ? "ordered" : "wrong order",

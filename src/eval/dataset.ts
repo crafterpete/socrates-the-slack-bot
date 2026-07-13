@@ -8,13 +8,13 @@ function readJsonl<T>(filePath: string): T[] {
   const raw = readFileSync(filePath, "utf8");
   return raw
     .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && !line.startsWith("//"))
-    .map((line, i) => {
+    .map((line, i) => ({ line: line.trim(), lineNumber: i + 1 }))
+    .filter(({ line }) => line && !line.startsWith("//"))
+    .map(({ line, lineNumber }) => {
       try {
         return JSON.parse(line) as T;
       } catch (err) {
-        throw new Error(`Invalid JSON on ${path.basename(filePath)} line ${i + 1}: ${(err as Error).message}`);
+        throw new Error(`Invalid JSON on ${path.basename(filePath)} line ${lineNumber}: ${(err as Error).message}`);
       }
     });
 }

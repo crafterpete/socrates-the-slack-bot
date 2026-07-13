@@ -49,8 +49,7 @@ function loadIndex(): EmbeddingIndex {
     content_fingerprint: string;
   }[];
   const liveFingerprintById = new Map(live.map((r) => [r.artifact_id, r.content_fingerprint]));
-  for (let i = 0; i < manifest.artifactIds.length; i++) {
-    const artifactId = manifest.artifactIds[i]!;
+  for (const [i, artifactId] of manifest.artifactIds.entries()) {
     if (liveFingerprintById.get(artifactId) !== manifest.contentFingerprints[i]) {
       throw new Error(
         `artifact_embeddings sidecar is stale (content_fingerprint mismatch for ${artifactId}). ` +
@@ -97,9 +96,9 @@ export function rankBySimilarity(queryVec: number[], candidateIds: string[]): Si
   }
   if (!validIds.length) return [];
 
-  const [similarities] = cosineSimilarity([queryVec], candidateVectors);
+  const similarities = cosineSimilarity([queryVec], candidateVectors)[0] ?? [];
   const scored = validIds
-    .map((artifactId, i) => ({ artifactId, similarity: similarities![i]! }))
+    .map((artifactId, i) => ({ artifactId, similarity: similarities[i] ?? 0 }))
     .sort((a, b) => b.similarity - a.similarity);
   return scored.map((s, i) => ({ artifactId: s.artifactId, rank: i + 1, similarity: s.similarity }));
 }

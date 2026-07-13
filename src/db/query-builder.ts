@@ -193,7 +193,7 @@ function sampleEnumValues(entity: EntityName): Record<string, string[]> {
       .all(ENUM_VALUE_CAP + 1) as { v: unknown }[];
     if (rows.length === 0 || rows.length > ENUM_VALUE_CAP) continue;
     const values = rows.map((r) => String(r.v));
-    if (!values.every(isScalarLabel)) continue; 
+    if (!values.every(isScalarLabel)) continue;
     result[column] = values.sort((a, b) => {
       const na = Number(a);
       const nb = Number(b);
@@ -208,9 +208,10 @@ export function describeEntity(entity: EntityName): EntitySchemaInfo {
   if (!schema) {
     throw new Error(`Unknown entity "${entity}". Valid entities: ${Object.keys(ENTITY_SCHEMA).join(", ")}`);
   }
-  const foreign_keys = schema.columns
-    .filter((c) => c !== schema.pk && FK_ENRICHMENT[c])
-    .map((c) => ({ column: c, references: FK_ENRICHMENT[c]!.entity }));
+  const foreign_keys = schema.columns.flatMap((column) => {
+    const fk = column === schema.pk ? undefined : FK_ENRICHMENT[column];
+    return fk ? [{ column, references: fk.entity }] : [];
+  });
   return { entity, columns: schema.columns, foreign_keys, enum_values: sampleEnumValues(entity) };
 }
 
@@ -288,11 +289,13 @@ function compileWhere(
         break;
       }
       case "between": {
-        if (!Array.isArray(f.value) || f.value.length !== 2) {
+        const range = Array.isArray(f.value) ? f.value : [];
+        const [low, high] = range;
+        if (range.length !== 2 || low === undefined || high === undefined) {
           throw new Error(`"between" requires an array of exactly 2 values for column "${f.column}"`);
         }
         parts.push(`${col} BETWEEN ? AND ?`);
-        params.push(f.value[0], normalizeUpperBound(f.value[1]!));
+        params.push(low, normalizeUpperBound(high));
         break;
       }
     }
@@ -345,8 +348,9 @@ function enrichRows(entity: EntityName, rows: Record<string, unknown>[]): Record
       if (fk === ownPk) continue;
       const v = row[fk];
       if (typeof v === "string") {
-        if (!idsByFk.has(fk)) idsByFk.set(fk, new Set());
-        idsByFk.get(fk)!.add(v);
+        const ids = idsByFk.get(fk) ?? new Set<string>();
+        ids.add(v);
+        idsByFk.set(fk, ids);
       }
     }
   }
@@ -354,7 +358,9 @@ function enrichRows(entity: EntityName, rows: Record<string, unknown>[]): Record
 
   const nameByFk = new Map<string, Map<string, string>>();
   for (const [fk, idSet] of idsByFk) {
-    const { entity: targetEntity, nameColumn } = FK_ENRICHMENT[fk]!;
+    const enrichment = FK_ENRICHMENT[fk];
+    if (!enrichment) continue;
+    const { entity: targetEntity, nameColumn } = enrichment;
     const target = ENTITY_SCHEMA[targetEntity];
     const ids = [...idSet];
     const sql = `SELECT ${target.pk} AS id, ${nameColumn} AS name FROM ${target.table} WHERE ${target.pk} IN (${ids.map(() => "?").join(",")})`;
@@ -610,9 +616,10 @@ async function searchArtifactsHybrid(
   }
 
   // Vector-only hits never had an FTS match, so snippet() can't run — fall back to summary.
-  const rows = fused.map((f) => {
-    const row = displayById.get(f.id)!;
-    return {
+  const rows = fused.flatMap((f) => {
+    const row = displayById.get(f.id);
+    if (!row) return [];
+    return [{
       artifact_id: row.artifact_id,
       title: row.title,
       artifact_type: row.artifact_type,
@@ -621,7 +628,7 @@ async function searchArtifactsHybrid(
       product_id: row.product_id,
       competitor_id: row.competitor_id,
       snippet: snippetById.get(f.id) ?? String(row.summary),
-    };
+    }];
   });
   return { rows, totalMatches, facets };
 }

@@ -45,16 +45,14 @@ export function extractRetrieval(toolCalls: ToolCall[]): GroupedIds {
     if (!ids || typeof ids !== "object") continue;
     for (const [entity, values] of Object.entries(ids)) {
       if (!Array.isArray(values)) continue;
-      let set = seen.get(entity as EntityType);
-      if (!set) {
-        set = new Set();
-        seen.set(entity as EntityType, set);
-        grouped[entity as EntityType] = [];
-      }
+      const key = entity as EntityType;
+      const set = seen.get(key) ?? new Set<string>();
+      seen.set(key, set);
+      const collected = (grouped[key] ??= []);
       for (const value of values) {
         if (typeof value !== "string" || set.has(value)) continue;
         set.add(value);
-        grouped[entity as EntityType]!.push(value);
+        collected.push(value);
       }
     }
   }

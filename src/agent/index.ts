@@ -16,7 +16,7 @@ import type { ChatMessage } from "../shared/chat.js";
 import { ABSTAIN_MARKER, REFUSE_MARKER } from "../shared/markers.js";
 import { withToolGateway } from "./gateway.js";
 
-const SYSTEM_PROMPT = `You are Northstar's internal Q&A assistant.
+const SYSTEM_PROMPT = `You are Socrates, Northstar's internal Q&A assistant.
 
 Use \`query_entities\` for precise/complete lookups, counts, filters, rankings, and aggregates over
 structured data (${ENTITY_NAMES.join(", ")}). Use \`search_artifacts\` for open-ended topic questions

@@ -22,14 +22,14 @@ const envSchema = z.object({
   NODE_ENV: z.string().default("development"),
 });
 
+function formatIssues(issues: z.ZodIssue[]): string {
+  return issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("\n");
+}
+
 const parsed = envSchema.safeParse(process.env);
 
 if (!parsed.success) {
-  const details = parsed.error.issues
-    .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-    .join("\n");
-
-  throw new Error(`Invalid environment configuration:\n${details}`);
+  throw new Error(`Invalid environment configuration:\n${formatIssues(parsed.error.issues)}`);
 }
 
 export const env = {
@@ -56,11 +56,7 @@ export function getSlackEnv(): SlackEnv {
 
   const parsedSlack = slackSchema.safeParse(env);
   if (!parsedSlack.success) {
-    const details = parsedSlack.error.issues
-      .map((issue) => `${issue.path.join(".")}: ${issue.message}`)
-      .join("\n");
-
-    throw new Error(`Slack environment is not configured:\n${details}`);
+    throw new Error(`Slack environment is not configured:\n${formatIssues(parsedSlack.error.issues)}`);
   }
 
   return parsedSlack.data;

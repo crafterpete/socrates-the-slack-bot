@@ -3,7 +3,7 @@ import path from "node:path";
 import { env } from "../config/env.js";
 import { REPORT_FILENAME } from "./paths.js";
 import { DEFAULT_SUITE, SUITE_ORDER } from "./types.js";
-import type { EvalResult, ProvenanceSuite } from "./types.js";
+import type { AnswerScore, EvalResult, ProvenanceSuite, RetrievalScore } from "./types.js";
 
 const pct = (n: number): string => `${(n * 100).toFixed(0)}%`;
 const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 1);
@@ -43,9 +43,13 @@ function printSuiteTable(label: string, results: EvalResult[]): void {
 }
 
 function printSummaryLine(results: EvalResult[]): void {
-  const graded = results.filter((r) => r.answerScore && r.answerScore.correct !== null);
-  const passed = graded.filter((r) => r.answerScore!.correct).length;
-  const retrieval = results.filter((r) => r.retrievalScore?.scored);
+  const graded = results
+    .map((r) => r.answerScore)
+    .filter((s): s is AnswerScore => s != null && s.correct !== null);
+  const passed = graded.filter((s) => s.correct).length;
+  const retrieval = results
+    .map((r) => r.retrievalScore)
+    .filter((s): s is RetrievalScore => s?.scored ?? false);
   const avgCalls = mean(results.map((r) => r.toolCalls.length));
   const maxCalls = results.length ? Math.max(...results.map((r) => r.toolCalls.length)) : 0;
 
@@ -55,10 +59,10 @@ function printSummaryLine(results: EvalResult[]): void {
   );
   console.log(`  tool calls: avg ${avgCalls.toFixed(1)}  max ${maxCalls}`);
   if (retrieval.length) {
-    const mrrVals = retrieval.map((r) => r.retrievalScore!.mrr).filter((v): v is number => v != null);
+    const mrrVals = retrieval.map((s) => s.mrr).filter((v): v is number => v != null);
     console.log(
-      `  retrieval: recall ${pct(mean(retrieval.map((r) => r.retrievalScore!.recall)))}  ` +
-        `precision ${pct(mean(retrieval.map((r) => r.retrievalScore!.precision)))}  ` +
+      `  retrieval: recall ${pct(mean(retrieval.map((s) => s.recall)))}  ` +
+        `precision ${pct(mean(retrieval.map((s) => s.precision)))}  ` +
         `mrr ${mrrVals.length ? mean(mrrVals).toFixed(2) : "-"}  ` +
         `(${retrieval.length} scored, ${mrrVals.length} ranked)`,
     );
@@ -70,7 +74,9 @@ export function printReport(results: EvalResult[], suiteById: Map<string, Proven
   const bySuite = new Map<string, EvalResult[]>();
   for (const r of results) {
     const suite = suiteById.get(r.id) ?? DEFAULT_SUITE;
-    (bySuite.get(suite) ?? bySuite.set(suite, []).get(suite)!).push(r);
+    const group = bySuite.get(suite) ?? [];
+    group.push(r);
+    bySuite.set(suite, group);
   }
 
   console.log("");

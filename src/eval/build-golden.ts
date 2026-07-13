@@ -40,7 +40,10 @@ function groupIds(res: any[]): GroupedIds {
   for (const row of res)
     for (const [k, v] of Object.entries(row)) {
       const e = ID_COLS[k];
-      if (e && typeof v === "string") { (g[e] ??= []); if (!g[e]!.includes(v)) g[e]!.push(v); }
+      if (e && typeof v === "string") {
+        const collected = (g[e] ??= []);
+        if (!collected.includes(v)) collected.push(v);
+      }
     }
   return g;
 }
@@ -362,7 +365,8 @@ function mkSpec(input: CaseInput): CaseSpec {
     ["Orchestrator", "prd_28d2947423c7"], ["Signal Insights", "prd_29a3d7cb61e9"],
   ];
   const byMentions = [...PRODUCTS].sort((a, b) => ftsIds(b[0]).length - ftsIds(a[0]).length);
-  const top = byMentions[0]!;
+  const [top] = byMentions;
+  if (!top) throw new Error("PRODUCTS list is empty");
   emitCase("0013", "Across all artifacts, which of Northstar Signal's products is mentioned by name most often in the artifact text?", mkSpec({
     task: { operation: "compare", scope: "multi_entity", entities: ["products", "artifacts"] },
     composition: { requiredOperations: ["lexical_match", "aggregate"], textPredicateCount: 4, aggregation: "count", ordering: "descending" },
@@ -1112,13 +1116,18 @@ if (UPDATE_SNAPSHOTS) {
 
 function writePartition(rows: Record<string, unknown>[], tuples: CaseTuple[], goldenPath: string, tuplesPath: string): void {
   const suiteOf = new Map(tuples.map((t) => [t.id, t.provenance.suite]));
+  const suiteFor = (row: Record<string, unknown>) => {
+    const suite = suiteOf.get(row.id as string);
+    if (!suite) throw new Error(`No tuple found for case ${String(row.id)}`);
+    return suite;
+  };
   const ordered = [...rows].sort(
-    (a, b) => SUITE_ORDER.indexOf(suiteOf.get(a.id as string)!) - SUITE_ORDER.indexOf(suiteOf.get(b.id as string)!),
+    (a, b) => SUITE_ORDER.indexOf(suiteFor(a)) - SUITE_ORDER.indexOf(suiteFor(b)),
   );
   const lines: string[] = [];
   let group = "";
   for (const r of ordered) {
-    const g = suiteOf.get(r.id as string)!;
+    const g = suiteFor(r);
     if (g !== group) { lines.push(`// === suite: ${g} ===`); group = g; }
     lines.push(JSON.stringify(r));
   }

@@ -1,4 +1,5 @@
 import type { App } from "@slack/bolt";
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import { requestConfig } from "../agent/gateway.js";
 import { askAgent, createQaAgent } from "../agent/index.js";
 import { COMPACTION_THRESHOLD, maybeCompactThread } from "../memory/compaction.js";
@@ -15,7 +16,7 @@ const agent = createQaAgent();
 
 // Socrates posts one of these the instant a question lands, then edits it into the real answer once
 // the agent finishes — so the user gets an immediate, on-brand acknowledgement instead of silence.
-const THINKING_LINES = [
+const THINKING_LINES: [string, ...string[]] = [
   "Let me examine the records — the unexamined query is not worth answering. :hourglass_flowing_sand:",
   "One moment while I interrogate the database… questioning things is rather my whole method. :thinking_face:",
   "I know that I know nothing — give me a moment to remedy that. Consulting the archives. :scroll:",
@@ -27,12 +28,68 @@ const THINKING_LINES = [
 ];
 
 function pickThinkingLine(): string {
-  return THINKING_LINES[Math.floor(Math.random() * THINKING_LINES.length)]!;
+  return THINKING_LINES[Math.floor(Math.random() * THINKING_LINES.length)] ?? THINKING_LINES[0];
+}
+
+// Progress edits to the placeholder while the agent works: a running tool-call count plus a
+// rotating Socratic remark, cycled deterministically so consecutive updates never repeat.
+const PROGRESS_LINES: [string, ...string[]] = [
+  "The first answer only deepens the question, as is tradition.",
+  "Cross-examining the records; they hold up better than most of my interlocutors.",
+  "Each table refers me to another. Very Athenian of them.",
+  "The evidence assembles; I merely supply the annoying questions.",
+  "Wisdom begins in wonder and ends, apparently, in SQL.",
+  "We have reached the part of the dialogue where the database contradicts itself.",
+  "A few more questions and the truth will have nowhere left to hide.",
+];
+
+export function progressLine(toolCalls: number): string {
+  const blurb = PROGRESS_LINES[(toolCalls - 1) % PROGRESS_LINES.length] ?? PROGRESS_LINES[0];
+  return `:hourglass_flowing_sand: Inquiry ${toolCalls}: ${blurb}`;
+}
+
+// Watches the agent run via LangChain callbacks and edits the placeholder message as tool calls
+// happen. Updates are queued so they land in order, throttled so Slack's rate limit is respected,
+// and finish() must be awaited before posting the real answer so a stale progress edit can never
+// overwrite it.
+export class SlackProgressHandler extends BaseCallbackHandler {
+  name = "slack_progress";
+  private toolCalls = 0;
+  private lastUpdateMs = 0;
+  private done = false;
+  private queue: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly update: (text: string) => Promise<unknown>,
+    private readonly minIntervalMs = 1000,
+  ) {
+    super();
+  }
+
+  handleToolStart(): void {
+    this.toolCalls += 1;
+    const n = this.toolCalls;
+    if (this.done) return;
+    const now = Date.now();
+    if (now - this.lastUpdateMs < this.minIntervalMs) return;
+    this.lastUpdateMs = now;
+    this.queue = this.queue
+      .then(() => this.update(progressLine(n)))
+      .then(
+        () => undefined,
+        () => undefined,
+      );
+  }
+
+  async finish(): Promise<void> {
+    this.done = true;
+    await this.queue;
+  }
 }
 
 // Maps a Slack reaction name to human feedback. Skin-tone suffixes (`+1::skin-tone-3`) and the
 // `thumbsup`/`thumbsdown` aliases all count; every other reaction is ignored.
-function reactionSentiment(reaction: string): Sentiment | null {
+export function reactionSentiment(reaction: string): Sentiment | null {
   const base = reaction.split("::")[0];
   if (base === "+1" || base === "thumbsup") return "up";
   if (base === "-1" || base === "thumbsdown") return "down";
@@ -43,6 +100,31 @@ type ThreadReplies = {
   messages?: { text?: string; user?: string; ts?: string; subtype?: string; bot_id?: string }[];
   response_metadata?: { next_cursor?: string };
 };
+
+// Posts the answer by editing the placeholder when one exists, or as a fresh message otherwise.
+// Either way the answer is logged under the message ts it ended up at, so a 👍/👎 reaction on it
+// can be traced to its Q&A.
+export async function deliverAnswer(args: {
+  channel: string;
+  threadTs: string;
+  question: string;
+  answer: string;
+  replyTs: string | undefined;
+  update: (args: { channel: string; ts: string; text: string }) => Promise<unknown>;
+  say: (message: { text: string; thread_ts?: string }) => Promise<unknown>;
+}): Promise<void> {
+  const { channel, threadTs, question, answer, replyTs, update, say } = args;
+  let messageTs = replyTs;
+  if (messageTs) {
+    await update({ channel, ts: messageTs, text: answer });
+  } else {
+    const posted = (await say({ text: answer, thread_ts: threadTs })) as { ts?: unknown } | undefined;
+    messageTs = typeof posted?.ts === "string" ? posted.ts : undefined;
+  }
+  if (messageTs) {
+    recordAgentResponse({ messageTs, channel, threadTs, question, answer });
+  }
+}
 
 // First mention in a thread that started as user-to-user talk: import the discussion so far so
 // the bot doesn't referee an argument it never saw. Capped at the newest COMPACTION_THRESHOLD
@@ -90,10 +172,7 @@ async function handleUserQuestion(args: {
       update: (args: { channel: string; ts: string; text: string }) => Promise<unknown>;
     };
     conversations: {
-      replies: (args: { channel: string; ts: string; limit?: number; cursor?: string }) => Promise<{
-        messages?: { text?: string; user?: string; ts?: string; subtype?: string; bot_id?: string }[];
-        response_metadata?: { next_cursor?: string };
-      }>;
+      replies: (args: { channel: string; ts: string; limit?: number; cursor?: string }) => Promise<ThreadReplies>;
     };
   };
   messageTs: string;
@@ -121,15 +200,16 @@ async function handleUserQuestion(args: {
     .catch(() => undefined);
   const replyTs = typeof placeholder?.ts === "string" ? placeholder.ts : undefined;
 
-  const deliver = async (text: string): Promise<void> => {
-    if (replyTs) {
-      await client.chat.update({ channel, ts: replyTs, text });
-      // Log what was said under this message ts so a 👍/👎 reaction on it can be traced to its Q&A.
-      recordAgentResponse({ messageTs: replyTs, channel, threadTs: conversationTs, question, answer: text });
-    } else {
-      await say({ text, thread_ts: conversationTs });
-    }
-  };
+  const deliver = (text: string): Promise<void> =>
+    deliverAnswer({
+      channel,
+      threadTs: conversationTs,
+      question,
+      answer: text,
+      replyTs,
+      update: client.chat.update,
+      say,
+    });
 
   // Swap the "thinking" reaction for a permanent outcome marker so Socrates' acknowledgement stays
   // visible on the question: :classical_building: when he answers, :warning: when something went wrong.
@@ -148,19 +228,27 @@ async function handleUserQuestion(args: {
   const history = toAgentMessages(state);
   appendThreadMessage(channel, conversationTs, { role: "user", content: question, author: userId });
 
+  const progress = replyTs
+    ? new SlackProgressHandler((text) => client.chat.update({ channel, ts: replyTs, text }))
+    : undefined;
+  const agentConfig = {
+    ...requestConfig({ userId, channel, threadTs: conversationTs }),
+    ...(progress ? { callbacks: [progress] } : {}),
+  };
+
   try {
     const messages = [...history, { role: "user" as const, content: `@${userId}: ${question}` }];
-    const answer = escapeBroadcasts(
-      await askAgent(agent, messages, requestConfig({ userId, channel, threadTs: conversationTs })),
-    );
+    const answer = escapeBroadcasts(await askAgent(agent, messages, agentConfig));
 
     appendThreadMessage(channel, conversationTs, { role: "assistant", content: answer });
+    await progress?.finish();
     await deliver(answer);
     await settleReaction("classical_building");
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     const reply = escapeBroadcasts(`Apologies — I stumbled while reasoning that one through: ${message}`);
     appendThreadMessage(channel, conversationTs, { role: "assistant", content: reply });
+    await progress?.finish();
     await deliver(reply);
     await settleReaction("warning");
   } finally {
@@ -223,9 +311,16 @@ export function registerSlackHandlers(app: App): void {
   // Capture 👍/👎 on Socrates' own answers as human feedback for the eval dataset. We only care about
   // thumbs reactions landing on a message Socrates authored (item_user === the bot).
   app.event("reaction_added", async ({ event, context }) => {
-    if (event.item.type !== "message" || event.item_user !== context.botUserId) return;
+    if (event.item.type !== "message") return;
+    if (event.item_user !== context.botUserId) {
+      console.log(`Reaction ignored (not on a bot message): :${event.reaction}: on ${event.item.ts} authored by ${event.item_user ?? "unknown"}`);
+      return;
+    }
     const sentiment = reactionSentiment(event.reaction);
-    if (!sentiment) return;
+    if (!sentiment) {
+      console.log(`Reaction ignored (not a thumbs signal): :${event.reaction}: on ${event.item.ts}`);
+      return;
+    }
 
     const recorded = recordFeedback({
       responseTs: event.item.ts,
@@ -233,9 +328,11 @@ export function registerSlackHandlers(app: App): void {
       userId: event.user,
       sentiment,
     });
-    if (recorded) {
-      console.log(`Feedback: ${sentiment} on ${event.item.ts} from ${event.user}`);
-    }
+    console.log(
+      recorded
+        ? `Feedback: ${sentiment} on ${event.item.ts} from ${event.user}`
+        : `Feedback ignored: ${event.item.ts} is not a recorded agent answer`,
+    );
   });
 
   app.event("reaction_removed", async ({ event, context }) => {
