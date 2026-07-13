@@ -1,4 +1,5 @@
 import { getDatabase } from "./client.js";
+import { embedQuery, rankBySimilarity } from "./embeddings.js";
 
 export const ENTITY_NAMES = [
   "customers",
@@ -58,6 +59,7 @@ export interface QueryEntitiesArgs {
 export interface SearchArtifactsArgs {
   query: string;
   exact_phrase?: boolean;
+  semantic?: boolean;
   filters?: {
     customer_id?: string;
     product_id?: string;
@@ -145,8 +147,6 @@ const ENTITY_SCHEMA: Record<EntityName, { table: string; pk: string; columns: st
   },
 };
 
-// Inverse of each entity's primary key: id column -> owning entity. Derived from ENTITY_SCHEMA
-// so it can't drift from the table definitions (consumed by the golden-set builder).
 export const PK_TO_ENTITY: Record<string, EntityName> = Object.fromEntries(
   (Object.entries(ENTITY_SCHEMA) as [EntityName, { pk: string }][]).map(([entity, s]) => [s.pk, entity]),
 );
@@ -169,23 +169,29 @@ export interface EntitySchemaInfo {
 }
 
 const ENUM_VALUE_CAP = 20;
+const ENUM_VALUE_MAX_LEN = 60;
+
+function isScalarLabel(v: string): boolean {
+  return v.length <= ENUM_VALUE_MAX_LEN && !/^[[{]/.test(v.trim());
+}
 
 function sampleEnumValues(entity: EntityName): Record<string, string[]> {
   const db = getDatabase();
   const schema = ENTITY_SCHEMA[entity];
   const result: Record<string, string[]> = {};
   for (const column of schema.columns) {
-    if (column === schema.pk || FK_ENRICHMENT[column]) continue; // pk/FK ids: not enum-shaped, use foreign_keys instead
+    if (column === schema.pk || FK_ENRICHMENT[column]) continue;
     const rows = db
       .prepare(`SELECT DISTINCT ${column} AS v FROM ${schema.table} WHERE ${column} IS NOT NULL LIMIT ?`)
       .all(ENUM_VALUE_CAP + 1) as { v: unknown }[];
-    if (rows.length > 0 && rows.length <= ENUM_VALUE_CAP) {
-      result[column] = rows.map((r) => String(r.v)).sort((a, b) => {
-        const na = Number(a);
-        const nb = Number(b);
-        return !Number.isNaN(na) && !Number.isNaN(nb) ? na - nb : a.localeCompare(b);
-      });
-    }
+    if (rows.length === 0 || rows.length > ENUM_VALUE_CAP) continue;
+    const values = rows.map((r) => String(r.v));
+    if (!values.every(isScalarLabel)) continue; 
+    result[column] = values.sort((a, b) => {
+      const na = Number(a);
+      const nb = Number(b);
+      return !Number.isNaN(na) && !Number.isNaN(nb) ? na - nb : a.localeCompare(b);
+    });
   }
   return result;
 }
@@ -450,58 +456,153 @@ export function queryEntities(args: QueryEntitiesArgs): QueryResult {
 export const SEARCH_LIMIT_DEFAULT = 5;
 export const SEARCH_LIMIT_MAX = 15;
 
-function compileSearchWhere(args: SearchArtifactsArgs): { clause: string; params: unknown[] } {
-  const matchExpr = args.exact_phrase !== false ? `"${args.query.replace(/"/g, '""')}"` : args.query;
-  const params: unknown[] = [matchExpr];
-  let clause = "WHERE artifacts_fts MATCH ?";
+// Candidates ranked before RRF fusion truncates to args.limit — wider than the agent-facing limit.
+const CANDIDATE_POOL_SIZE = 30;
+// Standard IR/RRF constant (also Elasticsearch's default).
+const RRF_K = 60;
 
-  const filters = args.filters ?? {};
-  if (filters.customer_id) {
-    clause += ` AND a.customer_id = ?`;
-    params.push(filters.customer_id);
+type ArtifactFilters = NonNullable<SearchArtifactsArgs["filters"]>;
+
+function compileArtifactFilters(filters: ArtifactFilters | undefined, alias?: string): { clause: string; params: unknown[] } {
+  const prefix = alias ? `${alias}.` : "";
+  const parts: string[] = [];
+  const params: unknown[] = [];
+  const f = filters ?? {};
+  if (f.customer_id) {
+    parts.push(`${prefix}customer_id = ?`);
+    params.push(f.customer_id);
   }
-  if (filters.product_id) {
-    clause += ` AND a.product_id = ?`;
-    params.push(filters.product_id);
+  if (f.product_id) {
+    parts.push(`${prefix}product_id = ?`);
+    params.push(f.product_id);
   }
-  if (filters.competitor_id) {
-    clause += ` AND a.competitor_id = ?`;
-    params.push(filters.competitor_id);
+  if (f.competitor_id) {
+    parts.push(`${prefix}competitor_id = ?`);
+    params.push(f.competitor_id);
   }
-  if (filters.artifact_type) {
-    clause += ` AND a.artifact_type = ?`;
-    params.push(filters.artifact_type);
+  if (f.artifact_type) {
+    parts.push(`${prefix}artifact_type = ?`);
+    params.push(f.artifact_type);
   }
-  if (filters.created_after) {
-    clause += ` AND a.created_at >= ?`;
-    params.push(filters.created_after);
+  if (f.created_after) {
+    parts.push(`${prefix}created_at >= ?`);
+    params.push(f.created_after);
   }
-  if (filters.created_before) {
-    clause += ` AND a.created_at <= ?`;
-    params.push(normalizeUpperBound(filters.created_before));
+  if (f.created_before) {
+    parts.push(`${prefix}created_at <= ?`);
+    params.push(normalizeUpperBound(f.created_before));
   }
-  return { clause, params };
+  return { clause: parts.join(" AND "), params };
 }
 
-export function searchArtifacts(args: SearchArtifactsArgs): QueryResult {
+function compileMatchExpr(args: SearchArtifactsArgs): string {
+  const quote = (text: string): string => `"${text.replace(/"/g, '""')}"`;
+  if (args.exact_phrase !== false) return quote(args.query);
+  const terms = args.query.split(/\s+/).filter((t) => /[\p{L}\p{N}]/u.test(t));
+  return terms.length ? terms.map(quote).join(" ") : quote(args.query);
+}
+
+function compileSearchWhere(args: SearchArtifactsArgs): { clause: string; params: unknown[] } {
+  const matchExpr = compileMatchExpr(args);
+  const { clause: filterClause, params: filterParams } = compileArtifactFilters(args.filters, "a");
+  const clause = `WHERE artifacts_fts MATCH ?${filterClause ? ` AND ${filterClause}` : ""}`;
+  return { clause, params: [matchExpr, ...filterParams] };
+}
+
+async function searchArtifactsHybrid(args: SearchArtifactsArgs, limit: number): Promise<Record<string, unknown>[]> {
   const db = getDatabase();
-  const { clause, params } = compileSearchWhere(args);
+
+  const { clause: bm25Clause, params: bm25Params } = compileSearchWhere(args);
+  const bm25Rows = db
+    .prepare(`SELECT a.artifact_id AS id FROM artifacts_fts f JOIN artifacts a ON a.artifact_id = f.artifact_id ${bm25Clause} ORDER BY rank LIMIT ?`)
+    .all(...bm25Params, CANDIDATE_POOL_SIZE) as { id: string }[];
+  const rankBm25 = new Map<string, number>(bm25Rows.map((r, i) => [r.id, i + 1]));
+
+  const { clause: structClause, params: structParams } = compileArtifactFilters(args.filters);
+  const structuredIds = (
+    db.prepare(`SELECT artifact_id AS id FROM artifacts ${structClause ? `WHERE ${structClause}` : ""}`).all(...structParams) as { id: string }[]
+  ).map((r) => r.id);
+
+  const queryVec = await embedQuery(args.query);
+  const rankVec = new Map(rankBySimilarity(queryVec, structuredIds).map((r) => [r.artifactId, r.rank]));
+
+  const candidateIds = new Set<string>([...rankBm25.keys(), ...rankVec.keys()]);
+  const fused = [...candidateIds]
+    .map((id) => {
+      const rb = rankBm25.get(id);
+      const rv = rankVec.get(id);
+      const score = (rb !== undefined ? 1 / (RRF_K + rb) : 0) + (rv !== undefined ? 1 / (RRF_K + rv) : 0);
+      return { id, score, matchedBm25: rb !== undefined };
+    })
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit);
+
+  if (!fused.length) return [];
+
+  const displayRows = db
+    .prepare(
+      `SELECT artifact_id, title, artifact_type, created_at, customer_id, product_id, competitor_id, summary ` +
+        `FROM artifacts WHERE artifact_id IN (${fused.map(() => "?").join(",")})`,
+    )
+    .all(...fused.map((f) => f.id)) as Record<string, unknown>[];
+  const displayById = new Map(displayRows.map((r) => [r.artifact_id as string, r]));
+
+  const bm25MatchedIds = fused.filter((f) => f.matchedBm25).map((f) => f.id);
+  const snippetById = new Map<string, string>();
+  if (bm25MatchedIds.length) {
+    const matchExpr = compileMatchExpr(args);
+    const snipRows = db
+      .prepare(
+        `SELECT a.artifact_id AS id, snippet(artifacts_fts, 2, '[', ']', '...', 12) AS snippet ` +
+          `FROM artifacts_fts f JOIN artifacts a ON a.artifact_id = f.artifact_id ` +
+          `WHERE artifacts_fts MATCH ? AND a.artifact_id IN (${bm25MatchedIds.map(() => "?").join(",")})`,
+      )
+      .all(matchExpr, ...bm25MatchedIds) as { id: string; snippet: string }[];
+    for (const r of snipRows) snippetById.set(r.id, r.snippet);
+  }
+
+  // Vector-only hits never had an FTS match, so snippet() can't run — fall back to summary.
+  return fused.map((f) => {
+    const row = displayById.get(f.id)!;
+    return {
+      artifact_id: row.artifact_id,
+      title: row.title,
+      artifact_type: row.artifact_type,
+      created_at: row.created_at,
+      customer_id: row.customer_id,
+      product_id: row.product_id,
+      competitor_id: row.competitor_id,
+      snippet: snippetById.get(f.id) ?? String(row.summary),
+    };
+  });
+}
+
+export async function searchArtifacts(args: SearchArtifactsArgs): Promise<QueryResult> {
+  const db = getDatabase();
+  const limit = Math.max(1, Math.min(args.limit ?? SEARCH_LIMIT_DEFAULT, SEARCH_LIMIT_MAX));
 
   if (args.mode === "count") {
+    // Always pure-BM25: cosine similarity has no match/no-match threshold to count against.
+    const { clause, params } = compileSearchWhere(args);
     const sql = `SELECT COUNT(*) AS value FROM artifacts_fts f JOIN artifacts a ON a.artifact_id = f.artifact_id ${clause}`;
     const row = db.prepare(sql).get(...params) as Record<string, unknown>;
     return { rows: [row], ids: {} };
   }
 
-  const sql = `
-    SELECT a.artifact_id, a.title, a.artifact_type, a.created_at, a.customer_id, a.product_id, a.competitor_id,
-           snippet(artifacts_fts, 2, '[', ']', '...', 12) AS snippet
-    FROM artifacts_fts f JOIN artifacts a ON a.artifact_id = f.artifact_id
-    ${clause}
-    ORDER BY rank LIMIT ?`;
-  const limit = Math.max(1, Math.min(args.limit ?? SEARCH_LIMIT_DEFAULT, SEARCH_LIMIT_MAX));
+  let rows: Record<string, unknown>[];
+  if (args.semantic === false) {
+    const { clause, params } = compileSearchWhere(args);
+    const sql = `
+      SELECT a.artifact_id, a.title, a.artifact_type, a.created_at, a.customer_id, a.product_id, a.competitor_id,
+             snippet(artifacts_fts, 2, '[', ']', '...', 12) AS snippet
+      FROM artifacts_fts f JOIN artifacts a ON a.artifact_id = f.artifact_id
+      ${clause}
+      ORDER BY rank LIMIT ?`;
+    rows = db.prepare(sql).all(...params, limit) as Record<string, unknown>[];
+  } else {
+    rows = await searchArtifactsHybrid(args, limit);
+  }
 
-  const rows = db.prepare(sql).all(...params, limit) as Record<string, unknown>[];
   const enriched = enrichRows("artifacts", rows);
   return { rows: enriched, ids: collectIds("artifacts", enriched) };
 }

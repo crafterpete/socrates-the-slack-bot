@@ -12,10 +12,12 @@ loadEnv({ path: path.join(projectRoot, ".env") });
 
 const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().min(1, "ANTHROPIC_API_KEY is required"),
+  OPENAI_API_KEY: z.string().min(1, "OPENAI_API_KEY is required"),
   SLACK_BOT_TOKEN: z.string().optional(),
   SLACK_APP_TOKEN: z.string().optional(),
   DATABASE_PATH: z.string().default("src/db/synthetic_startup.sqlite"),
   ANTHROPIC_MODEL: z.string().default("claude-opus-4-8"),
+  EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
   NODE_ENV: z.string().default("development"),
 });
 

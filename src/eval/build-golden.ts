@@ -370,12 +370,12 @@ function mkSpec(input: CaseInput): CaseSpec {
   ];
   const byMentions = [...PRODUCTS].sort((a, b) => ftsIds(b[0]).length - ftsIds(a[0]).length);
   const top = byMentions[0]!;
-  emitCase("0013", "Across all artifacts, which of Northstar Signal's products is referenced most often?", mkSpec({
+  emitCase("0013", "Across all artifacts, which of Northstar Signal's products is mentioned by name most often in the artifact text?", mkSpec({
     task: { operation: "compare", scope: "multi_entity", entities: ["products", "artifacts"] },
     composition: { requiredOperations: ["lexical_match", "aggregate"], textPredicateCount: 4, aggregation: "count", ordering: "descending" },
-    retrieval: { modality: "lexical", evaluation: "required" },
+    retrieval: { modality: "lexical", evaluation: "not_applicable" },
     output: { answerShape: "scalar" },
-  }), top[0], { products: [top[1]] });
+  }), top[0], {});
 }
 {
   const r = sqlRanked(

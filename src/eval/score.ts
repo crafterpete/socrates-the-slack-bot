@@ -8,10 +8,7 @@ import type {
   RetrievalScore,
 } from "./types.js";
 
-// MRR measures rank of the first correct id within the predicted-ids array. That array order is
-// only a meaningful signal when it reflects an actual relevance ranking (search_artifacts' BM25
-// ORDER BY rank); for structured-only cases it's just incidental tool-call/row order, so MRR is
-// scored only for the modalities where retrieval is genuinely ranked.
+// MRR only means something when predicted-id order reflects a real ranking, not incidental row order.
 const RANKED_MODALITIES = new Set<RetrievalModality>(["lexical", "semantic", "hybrid"]);
 
 const norm = (s: string): string => s.toLowerCase().replace(/\s+/g, " ").trim();
@@ -33,8 +30,7 @@ function splitList(text: string): string[] {
     .filter(Boolean);
 }
 
-// The system prompt asks the agent to lead yes/no answers with "Yes"/"No", so the leading
-// token is the decisive signal. The cue-based fallback only runs for replies that do not.
+// Leading token is decisive (system prompt asks for a leading Yes/No); cue regexes are a fallback.
 function detectPolarity(resp: string): boolean | null {
   const s = resp.trim().toLowerCase();
   if (/^(yes|yep|yeah|correct|true|affirmative)\b/.test(s)) return true;
@@ -44,10 +40,7 @@ function detectPolarity(resp: string): boolean | null {
   return null;
 }
 
-// Answer eval. Deterministic checks grade the ground-truth `answer` value against the
-// agent's free-text response. Heuristics (number extraction, substring presence) are
-// intentionally lenient because the response is Slack prose, not a bare value. `judge`
-// and null answers defer to manual/LLM review (correct = null).
+// Grades free-text Slack prose against a ground-truth answer; judge/null match_types defer to manual review.
 export function scoreAnswer(rec: GoldenRecord, response: string): AnswerScore {
   const mk = (correct: boolean, detail?: string): AnswerScore => ({
     match_type: rec.match_type,
@@ -79,9 +72,7 @@ export function scoreAnswer(rec: GoldenRecord, response: string): AnswerScore {
       const polarity = detectPolarity(resp);
       return mk(polarity !== null && polarity === gold, `detected=${polarity}`);
     }
-    // abstain/refuse: the response must begin with the exact marker, per EVALS.md's match_type
-    // table ("Response begins with [Abstain]"/"[Refuse]"). Separate match types so the two
-    // behaviors (in-scope-but-unsupported vs out-of-scope-or-disallowed) report independently.
+    // Separate match types so unsupported-but-in-scope vs out-of-scope report independently.
     case "abstain":
       return mk(resp.startsWith(norm(ABSTAIN_MARKER)), `expected leading ${ABSTAIN_MARKER}`);
     case "refuse":
@@ -97,8 +88,10 @@ export function scoreAnswer(rec: GoldenRecord, response: string): AnswerScore {
       );
     }
     case "ranked_list": {
+      // Last occurrence, not first: a "shows its work" response repeats items in scratch order
+      // before the final sorted list, and the final list is where each item last appears.
       const items = splitList(rec.answer);
-      const idxs = items.map((i) => resp.indexOf(norm(i)));
+      const idxs = items.map((i) => resp.lastIndexOf(norm(i)));
       const allPresent = idxs.every((i) => i >= 0);
       const ordered = allPresent && idxs.every((v, k) => k === 0 || idxs[k - 1]! <= v);
       return mk(
@@ -111,11 +104,7 @@ export function scoreAnswer(rec: GoldenRecord, response: string): AnswerScore {
   }
 }
 
-// Retrieval eval. Compares predicted ids to relevant_ids per entity_type, then rolls up.
-// The caller (run.ts) only invokes this when retrieval_evaluation="required"; not_applicable
-// and trajectory_only cases are excluded from retrieval metrics upstream, not inferred here
-// from id emptiness. `modality` gates MRR: only scored for ranked retrieval (see
-// RANKED_MODALITIES above); structured-only cases get mrr=null, not a fabricated 1.0.
+// Caller only invokes this for retrieval_evaluation="required"; mrr is null (not 0) for unranked modalities.
 export function scoreRetrieval(gold: GroupedIds, pred: GroupedIds, modality: RetrievalModality): RetrievalScore {
   const ranked = RANKED_MODALITIES.has(modality);
   const entities = new Set<EntityType>([

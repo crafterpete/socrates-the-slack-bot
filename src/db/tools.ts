@@ -80,6 +80,15 @@ const searchArtifactsSchema = z.object({
     .boolean()
     .default(true)
     .describe("true matches the query as an exact phrase; false matches rows containing all the words in any order"),
+  semantic: z
+    .boolean()
+    .default(true)
+    .describe(
+      "Fuses in meaning-based matching alongside exact-word matching (reciprocal rank fusion), so results " +
+        "surface even when the artifact uses different words than the query. Leave this on by default; only " +
+        "set false for a rare exact-term-only lookup (e.g. matching a literal id-like token). Does not apply " +
+        "to mode \"count\", which is always an exact textual-occurrence count.",
+    ),
   filters: z
     .object({
       customer_id: z.string().optional(),
@@ -129,14 +138,16 @@ export const databaseTools = [
       "numbers yourself.",
     schema: queryEntitiesSchema,
   }),
-  tool((args) => JSON.stringify(searchArtifacts(args)), {
+  tool(async (args) => JSON.stringify(await searchArtifacts(args)), {
     name: "search_artifacts",
     description:
-      "Full-text search over artifact title/summary/content (customer calls, support tickets, competitor " +
-      "reports, internal docs), ranked by relevance (BM25), most relevant first. Use this for open-ended " +
-      "topic/keyword questions rather than exact-match lookups. Optionally scope the search with filters " +
-      "(e.g. customer_id from a prior query_entities call) to search within one entity's artifacts. For " +
-      "\"how many artifacts mention X\" questions, use mode \"count\" rather than counting returned rows.",
+      "Search over artifact title/summary/content (customer calls, support tickets, competitor reports, " +
+      "internal docs), most relevant first. Matches both by exact wording (BM25) and by meaning, fused " +
+      "into one ranking, so it finds relevant artifacts even when they use different words than the " +
+      "query. Use this for open-ended topic questions rather than exact-match lookups. Optionally scope " +
+      "the search with filters (e.g. customer_id from a prior query_entities call) to search within one " +
+      "entity's artifacts. For \"how many artifacts mention X\" questions, use mode \"count\" rather than " +
+      "counting returned rows.",
     schema: searchArtifactsSchema,
   }),
 ];
