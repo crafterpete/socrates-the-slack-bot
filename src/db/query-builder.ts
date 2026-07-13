@@ -56,10 +56,14 @@ export interface QueryEntitiesArgs {
   limit?: number;
 }
 
+export const FACET_COLUMNS = ["customer_id", "product_id", "competitor_id", "artifact_type"] as const;
+export type FacetColumn = (typeof FACET_COLUMNS)[number];
+
 export interface SearchArtifactsArgs {
   query: string;
   exact_phrase?: boolean;
   semantic?: boolean;
+  facet_by?: FacetColumn;
   filters?: {
     customer_id?: string | string[];
     product_id?: string | string[];
@@ -77,6 +81,7 @@ export interface QueryResult {
   ids: Record<string, string[]>;
   total_matches?: number;
   truncated?: boolean;
+  facets?: Record<string, number>;
 }
 
 // This functions as an allowlist of tables and columns the agent can interact with.
@@ -498,6 +503,34 @@ function compileArtifactFilters(filters: ArtifactFilters | undefined, alias?: st
   return { clause: parts.join(" AND "), params };
 }
 
+// Keys are display names when the facet column is a foreign key (via FK_ENRICHMENT), raw values
+// otherwise (artifact_type). Rows with a NULL facet value are excluded, so counts can sum to less
+// than total_matches.
+function labelFacets(column: FacetColumn, counts: { v: string; n: number }[]): Record<string, number> {
+  const fk = FK_ENRICHMENT[column];
+  if (!fk || counts.length === 0) return Object.fromEntries(counts.map((r) => [r.v, r.n]));
+  const schema = ENTITY_SCHEMA[fk.entity];
+  const nameRows = getDatabase()
+    .prepare(
+      `SELECT ${schema.pk} AS id, ${fk.nameColumn} AS name FROM ${schema.table} WHERE ${schema.pk} IN (${counts.map(() => "?").join(",")})`,
+    )
+    .all(...counts.map((r) => r.v)) as { id: string; name: string }[];
+  const nameById = new Map(nameRows.map((r) => [r.id, r.name]));
+  return Object.fromEntries(counts.map((r) => [nameById.get(r.v) ?? r.v, r.n]));
+}
+
+function facetCandidates(facetBy: FacetColumn, candidateIds: string[]): Record<string, number> {
+  if (!candidateIds.length) return {};
+  const counts = getDatabase()
+    .prepare(
+      `SELECT ${facetBy} AS v, COUNT(*) AS n FROM artifacts ` +
+        `WHERE artifact_id IN (${candidateIds.map(() => "?").join(",")}) AND ${facetBy} IS NOT NULL ` +
+        `GROUP BY v ORDER BY n DESC`,
+    )
+    .all(...candidateIds) as { v: string; n: number }[];
+  return labelFacets(facetBy, counts);
+}
+
 function compileMatchExpr(args: SearchArtifactsArgs): string {
   const quote = (text: string): string => `"${text.replace(/"/g, '""')}"`;
   if (args.exact_phrase !== false) return quote(args.query);
@@ -515,7 +548,7 @@ function compileSearchWhere(args: SearchArtifactsArgs): { clause: string; params
 async function searchArtifactsHybrid(
   args: SearchArtifactsArgs,
   limit: number,
-): Promise<{ rows: Record<string, unknown>[]; totalMatches: number }> {
+): Promise<{ rows: Record<string, unknown>[]; totalMatches: number; facets?: Record<string, number> }> {
   const db = getDatabase();
 
   const { clause: bm25Clause, params: bm25Params } = compileSearchWhere(args);
@@ -541,6 +574,7 @@ async function searchArtifactsHybrid(
   // exact corpus-wide total. Still enough signal to distinguish a handful from a pervasive pattern.
   const candidateIds = new Set<string>([...rankBm25.keys(), ...rankVec.keys()]);
   const totalMatches = candidateIds.size;
+  const facets = args.facet_by ? facetCandidates(args.facet_by, [...candidateIds]) : undefined;
   const fused = [...candidateIds]
     .map((id) => {
       const rb = rankBm25.get(id);
@@ -551,7 +585,7 @@ async function searchArtifactsHybrid(
     .sort((a, b) => b.score - a.score)
     .slice(0, limit);
 
-  if (!fused.length) return { rows: [], totalMatches };
+  if (!fused.length) return { rows: [], totalMatches, facets };
 
   const displayRows = db
     .prepare(
@@ -589,7 +623,7 @@ async function searchArtifactsHybrid(
       snippet: snippetById.get(f.id) ?? String(row.summary),
     };
   });
-  return { rows, totalMatches };
+  return { rows, totalMatches, facets };
 }
 
 export async function searchArtifacts(args: SearchArtifactsArgs): Promise<QueryResult> {
@@ -606,6 +640,7 @@ export async function searchArtifacts(args: SearchArtifactsArgs): Promise<QueryR
 
   let rows: Record<string, unknown>[];
   let totalMatches: number;
+  let facets: Record<string, number> | undefined;
   if (args.semantic === false) {
     const { clause, params } = compileSearchWhere(args);
     const sql = `
@@ -617,8 +652,15 @@ export async function searchArtifacts(args: SearchArtifactsArgs): Promise<QueryR
     rows = db.prepare(sql).all(...params, limit) as Record<string, unknown>[];
     const countSql = `SELECT COUNT(*) AS value FROM artifacts_fts f JOIN artifacts a ON a.artifact_id = f.artifact_id ${clause}`;
     totalMatches = (db.prepare(countSql).get(...params) as { value: number }).value;
+    if (args.facet_by) {
+      // Exact over the full BM25 match set, not window-capped like the hybrid side.
+      const facetSql =
+        `SELECT a.${args.facet_by} AS v, COUNT(*) AS n FROM artifacts_fts f JOIN artifacts a ON a.artifact_id = f.artifact_id ` +
+        `${clause} AND a.${args.facet_by} IS NOT NULL GROUP BY v ORDER BY n DESC`;
+      facets = labelFacets(args.facet_by, db.prepare(facetSql).all(...params) as { v: string; n: number }[]);
+    }
   } else {
-    ({ rows, totalMatches } = await searchArtifactsHybrid(args, limit));
+    ({ rows, totalMatches, facets } = await searchArtifactsHybrid(args, limit));
   }
 
   const enriched = enrichRows("artifacts", rows);
@@ -627,5 +669,6 @@ export async function searchArtifacts(args: SearchArtifactsArgs): Promise<QueryR
     ids: collectIds("artifacts", enriched),
     total_matches: totalMatches,
     truncated: totalMatches > enriched.length,
+    ...(facets !== undefined && { facets }),
   };
 }

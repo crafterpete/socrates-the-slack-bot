@@ -26,6 +26,7 @@ function getStateDb(): Database.Database {
         thread_key TEXT NOT NULL,
         role TEXT NOT NULL,
         content TEXT NOT NULL,
+        author TEXT,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
       );
       CREATE INDEX IF NOT EXISTS thread_messages_by_key ON thread_messages(thread_key, id);
@@ -35,6 +36,10 @@ function getStateDb(): Database.Database {
         updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
       );
     `);
+    const columns = db.prepare("PRAGMA table_info(thread_messages)").all() as { name: string }[];
+    if (!columns.some((c) => c.name === "author")) {
+      db.exec("ALTER TABLE thread_messages ADD COLUMN author TEXT");
+    }
   }
   return db;
 }
@@ -49,9 +54,10 @@ export function getThreadState(channelId: string, threadTs?: string): ThreadStat
   const summaryRow = store
     .prepare("SELECT summary FROM thread_summaries WHERE thread_key = ?")
     .get(key) as { summary: string } | undefined;
-  const messages = store
-    .prepare("SELECT id, role, content FROM thread_messages WHERE thread_key = ? ORDER BY id")
-    .all(key) as StoredMessage[];
+  const rows = store
+    .prepare("SELECT id, role, content, author FROM thread_messages WHERE thread_key = ? ORDER BY id")
+    .all(key) as (Omit<StoredMessage, "author"> & { author: string | null })[];
+  const messages = rows.map(({ author, ...rest }) => ({ ...rest, author: author ?? undefined }));
   return { summary: summaryRow?.summary, messages };
 }
 
@@ -61,8 +67,8 @@ export function appendThreadMessage(
   message: ChatMessage,
 ): void {
   getStateDb()
-    .prepare("INSERT INTO thread_messages (thread_key, role, content) VALUES (?, ?, ?)")
-    .run(threadKey(channelId, threadTs), message.role, message.content);
+    .prepare("INSERT INTO thread_messages (thread_key, role, content, author) VALUES (?, ?, ?, ?)")
+    .run(threadKey(channelId, threadTs), message.role, message.content, message.author ?? null);
 }
 
 export function compactThread(
@@ -89,7 +95,12 @@ export function compactThread(
 }
 
 export function toAgentMessages(state: ThreadState): ChatMessage[] {
-  const history = state.messages.map(({ role, content }) => ({ role, content }));
+  // Threads can have several human participants, so user turns carry their author inline;
+  // the model needs it to tell speakers apart and to know who "I" refers to.
+  const history = state.messages.map(({ role, content, author }) => ({
+    role,
+    content: role === "user" && author ? `@${author}: ${content}` : content,
+  }));
   if (!state.summary) return history;
   return [
     {

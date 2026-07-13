@@ -1,12 +1,28 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import Database from "better-sqlite3";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ChatMessage } from "../../shared/chat.js";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "thread-store-test-"));
-process.env.STATE_DATABASE_PATH = path.join(tmpDir, "state.sqlite");
+const dbPath = path.join(tmpDir, "state.sqlite");
+process.env.STATE_DATABASE_PATH = dbPath;
+
+// Pre-create the DB with the pre-author schema so every test below also proves the
+// ALTER TABLE migration ran.
+const legacy = new Database(dbPath);
+legacy.exec(`
+  CREATE TABLE thread_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    thread_key TEXT NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  );
+`);
+legacy.close();
 
 const { appendThreadMessage, compactThread, getThreadState, toAgentMessages } = await import(
   "../thread-store.js"
@@ -60,6 +76,15 @@ describe("thread-store", () => {
     );
   });
 
+  test("round-trips message authors", () => {
+    appendThreadMessage("C6", "t1", { role: "user", content: "from jane", author: "U_JANE" });
+    appendThreadMessage("C6", "t1", { role: "assistant", content: "reply" });
+
+    const { messages } = getThreadState("C6", "t1");
+    assert.equal(messages[0]?.author, "U_JANE");
+    assert.equal(messages[1]?.author, undefined);
+  });
+
   test("toAgentMessages prepends the summary as context", () => {
     const rendered = toAgentMessages({
       summary: "earlier stuff",
@@ -69,6 +94,20 @@ describe("thread-store", () => {
     assert.equal(rendered[0]?.role, "user");
     assert.match(rendered[0]?.content ?? "", /earlier stuff/);
     assert.deepEqual(rendered[1], { role: "user", content: "hi" });
+  });
+
+  test("toAgentMessages labels user turns with their author", () => {
+    const rendered = toAgentMessages({
+      summary: undefined,
+      messages: [
+        { id: 1, role: "user", content: "what is our churn?", author: "U_JANE" },
+        { id: 2, role: "assistant", content: "3 percent" },
+        { id: 3, role: "user", content: "sounds high to me", author: "U_BOB" },
+      ],
+    });
+    assert.equal(rendered[0]?.content, "@U_JANE: what is our churn?");
+    assert.equal(rendered[1]?.content, "3 percent");
+    assert.equal(rendered[2]?.content, "@U_BOB: sounds high to me");
   });
 });
 

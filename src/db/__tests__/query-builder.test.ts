@@ -574,6 +574,37 @@ describe("searchArtifacts", () => {
     assert.equal(emptyList.rows[0]!.value, unfiltered.rows[0]!.value);
   });
 
+  test("facet_by rolls up the full match set, not just the returned rows", async () => {
+    const { rows, facets } = await searchArtifacts({
+      query: "runbook automation",
+      exact_phrase: false,
+      semantic: false,
+      facet_by: "artifact_type",
+      limit: 5,
+    });
+    assert.equal(rows.length, 5);
+    assert.deepEqual(facets, { competitor_research: 24, customer_call: 7, internal_document: 4 });
+  });
+
+  test("facet_by on a foreign-key column returns display names, not ids", async () => {
+    const { facets } = await searchArtifacts({
+      query: "runbook automation",
+      exact_phrase: false,
+      semantic: false,
+      facet_by: "customer_id",
+      limit: 5,
+    });
+    assert.ok(facets);
+    assert.equal(Object.keys(facets).length, 24);
+    assert.equal(facets["TransPac Payments Pty Ltd"], 3);
+    assert.ok(Object.keys(facets).every((k) => !k.startsWith("cus_")));
+  });
+
+  test("facets are absent when facet_by is not requested", async () => {
+    const result = await searchArtifacts({ query: "runbook automation", exact_phrase: false, semantic: false, limit: 5 });
+    assert.equal("facets" in result, false);
+  });
+
   test("mode: count ignores semantic (always a pure BM25 occurrence count)", async () => {
     const { rows } = await searchArtifacts({ query: "runbook automation", exact_phrase: true, semantic: true, mode: "count" });
     assert.equal(rows[0]!.value, 13);
@@ -605,6 +636,20 @@ describe("searchArtifacts: hybrid", () => {
     });
     assert.ok(rows.length > 0);
     assert.ok(rows.every((r) => r.customer_id === "cus_10762173c26d"));
+  });
+
+  test("hybrid facet_by covers the fused candidate set beyond the returned rows", async () => {
+    const { rows, facets, total_matches } = await searchArtifacts({
+      query: "customers running out of patience with how long our fixes are taking",
+      exact_phrase: false,
+      facet_by: "customer_id",
+      limit: 3,
+    });
+    assert.ok(facets);
+    const totalFaceted = Object.values(facets).reduce((a, b) => a + b, 0);
+    assert.ok(totalFaceted > rows.length, "facets should count matches beyond the returned page");
+    assert.ok(totalFaceted <= (total_matches as number));
+    assert.ok(Object.keys(facets).every((k) => !k.startsWith("cus_")));
   });
 
   test("hybrid search reports total_matches and truncated from the fused candidate set", async () => {

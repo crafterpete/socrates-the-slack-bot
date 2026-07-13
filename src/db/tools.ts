@@ -4,6 +4,7 @@ import {
   AGGREGATE_FNS,
   describeEntities,
   ENTITY_NAMES,
+  FACET_COLUMNS,
   FILTER_OPS,
   queryEntities,
   QUERY_MODES,
@@ -91,6 +92,14 @@ const searchArtifactsSchema = z.object({
         "uses different words than the query. Leave on; set false only for literal exact-term lookups " +
         "(e.g. an id-like token). Ignored by mode \"count\", which is always an exact occurrence count.",
     ),
+  facet_by: z
+    .enum(FACET_COLUMNS)
+    .optional()
+    .describe(
+      "Adds a `facets` name-to-count rollup of every match in the set by this column, covering matches " +
+        "beyond the returned rows. Use it for breadth questions with a modest `limit` instead of maxing " +
+        "out rows: facet_by customer_id answers \"which customers...\" completely in a few tokens.",
+    ),
   filters: z
     .object({
       customer_id: idFilter,
@@ -115,9 +124,10 @@ const searchArtifactsSchema = z.object({
     .max(SEARCH_LIMIT_MAX)
     .default(SEARCH_LIMIT_DEFAULT)
     .describe(
-      `Rows returned (default ${SEARCH_LIMIT_DEFAULT}, max ${SEARCH_LIMIT_MAX}). Set to ` +
-        `${SEARCH_LIMIT_MAX} when scanning many candidates via a list filter, so every candidate ` +
-        "can surface its best match.",
+      `Rows returned (default ${SEARCH_LIMIT_DEFAULT}, max ${SEARCH_LIMIT_MAX}). Raise it only when ` +
+        "you genuinely need that many rows (e.g. enumerating artifacts per candidate in a list-filter " +
+        "scan); for breadth questions prefer `facet_by` with a modest limit. Every returned row costs " +
+        "context, so keep it small when you expect a specific answer.",
     ),
 });
 
@@ -153,12 +163,13 @@ export const databaseTools = [
       "one ranking, so relevant artifacts surface even when their wording differs from the query. Use " +
       "for open-ended topic questions, not exact-match lookups. Filters scope the search (e.g. " +
       "customer_id from a prior query_entities call). Id filters accept a list: scan a known candidate " +
-      "set (e.g. every ANZ customer) with one call at max `limit`, not one search per id, unless you " +
-      "need each candidate's top matches individually. Results include `total_matches` and `truncated`: " +
-      "when `truncated` is true, the rows are only the top slice of a larger matching set, so never " +
-      "describe the pattern as small or exhaustive from the rows alone; quantify with `total_matches` " +
-      "(\"at least N\") or follow up with a narrower search. For \"how many artifacts mention X\" " +
-      "questions, use mode \"count\" rather than counting returned rows.",
+      "set (e.g. every ANZ customer) with one call, not one search per id, unless you need each " +
+      "candidate's top matches individually. Results include `total_matches` and `truncated`: when " +
+      "`truncated` is true, the rows are only the top slice of a larger matching set, so never describe " +
+      "the pattern as small or exhaustive from the rows alone; quantify with `total_matches` (\"at " +
+      "least N\") and use `facet_by` to see the full set grouped by customer/type/product/competitor. " +
+      "For \"how many artifacts mention X\" questions, use mode \"count\" rather than counting returned " +
+      "rows.",
     schema: searchArtifactsSchema,
   }),
 ];

@@ -3,7 +3,7 @@ import { env } from "../config/env.js";
 import type { ChatMessage } from "../shared/chat.js";
 import { compactThread, getThreadState } from "./thread-store.js";
 
-export const COMPACTION_THRESHOLD = 24;
+export const COMPACTION_THRESHOLD = 16;
 export const KEEP_RECENT = 8;
 
 const SUMMARY_PROMPT = `You maintain a running summary of a Slack conversation between users and a
@@ -24,7 +24,9 @@ async function summarizeWithModel(
   messages: ChatMessage[],
 ): Promise<string> {
   summaryModel ??= new ChatAnthropic({ model: env.ANTHROPIC_MODEL, maxTokens: 512 });
-  const transcript = messages.map((m) => `${m.role}: ${m.content}`).join("\n");
+  const transcript = messages
+    .map((m) => `${m.role === "user" && m.author ? `@${m.author}` : m.role}: ${m.content}`)
+    .join("\n");
   const input = previousSummary
     ? `Previous summary:\n${previousSummary}\n\nNew messages to fold in:\n${transcript}`
     : `Messages to summarize:\n${transcript}`;

@@ -1,15 +1,41 @@
 Ongoing design Log
 
+## v4: A more friendly slack bot & live feedback
+Now, as mentioned in the core requirements file, agents can take a while to run, so we'll want the user to know that Socrates has seen the message and is working on it.
+
+![Socrates acknowledges your questions.](eval_reports/v4/v4-a-friendly-philosopher.jpg)
+
+![And he updates the user once the answer comes to him.](eval_reports/v4/v4-the-answer-came.jpg)
+
+In my test cases so far, it's never been more than a couple seconds of runtime, and we've hard-capped the tool call count to be 8 messages. 
+
+
+
 ## v3: Multi-turn queries and memory management
 Since we want multiple turn conversations and history, we'll need to pipe slack messages into the agent's context window.
 
-For the purposes of this app, I'll treat each new slack thread as a new conversation. Users (like me) want to be able to control when I start fresh, and slack threads are a clear delineation for that. 
+For the purposes of this app, each new slack thread is a new conversation. Users (like me) want to be able to control when they start fresh, and slack threads are a clear delineation for that. 
 
-We could pipe the entire slack thread into the agent's context, but for long-running conversations (imagine >100 messages), this leads to context bloat (less reliable outputs and $$$ expensive).
+We could pipe the entire slack thread into the agent's context, but for long-running conversations (imagine >100 messages), this leads to context bloat (less reliable outputs and $$$ expensive). 
 
+Instead, memories are stored in a local SQLite db (see @/src/memory/thread-store). We maintain a per-thread message history up to a hard-coded `COMPACTION_THRESHOLD` (16 messages). When that limit is hit, we summarize the thread history, write to the `thread_summaries` table, and remove messages older than the `KEEP_RECENT` threshold (we keep the most recent 8). This keeps in check context bloat from long-conversations. (note: evals `gold_0015`, `gold_0016`, `gold_0028` test on this access pattern.) 
 
+Now whenever Socrates (our chatbot) is asked "Tell me more about that", it'll know what "that" is referring to.
 
+![Socrates can answer ambiguously worded questions about previous messages](eval_reports/v3/v3-multiturn-queries-supported.jpg)
 
+Now I know what you're thinking: what about messages that don't tag the Slack bot, and the slack bot gets brought in as an arbiter? 
+
+Whenever the slack bot is tagged into a thread, it'll follow the same thresholds mentioned above and save that thread history and feed that information to the agent. 
+
+Conversations in threads with our Slack Bot tagged are passively saved into the thread-store db. 
+
+![Socrates only runs + replies when it's tagged.](eval_reports/v3/v3-sandwiched-conversation.jpg)
+
+Other forms of memory could be relevant but I'm leaving out of scope for this project: 
+- Organizational memory (memories about the organization's preferences or tendencies)
+- Inter-thread memory (memories across conversations; say: if you wanted a cache of frequent recently asked questions)
+- User-specific memory (memories that pertain about a specific user; like their preferences)
 
 ## v2: Semantic search
 As mentioned in the previous section, our agent is currently struggling with complex semantic-leaning questions. It tends to brute force its results by calling many different keyword searches, reaching the tool-calling limit. In particular, the agent was stalling out and changing its keywords to find the correct artifacts.
@@ -49,7 +75,6 @@ However, the agent still struggles with recall for semantic queries that require
 I think two directions we could take to improve this are: 
 - **Focus on precision**: Our precision on these semantic queries aren't very high. This leads to us missing other relevant information because the top-k outputs are imprecise. Some things we can do here: steer the agent's semantic querying pattern, experiment with how we're scoring and chunking the artifact vectors, revisit our hybrid search approach.
 - **Let the agent know about relevant results beyond top-k**: We currently return some top-k results for the agent. Sometimes there are other relevant results that are further down the set. Nudging the agent to look for them is a bit brute-forcey, but should improve recall at the cost of precision & context bloat.
-
 
 ## v1: Initial Slack Bot + Sql Tooling
 

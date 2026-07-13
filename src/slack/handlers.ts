@@ -1,7 +1,7 @@
 import type { App } from "@slack/bolt";
 import { requestConfig } from "../agent/gateway.js";
 import { askAgent, createQaAgent } from "../agent/index.js";
-import { maybeCompactThread } from "../memory/compaction.js";
+import { COMPACTION_THRESHOLD, maybeCompactThread } from "../memory/compaction.js";
 import {
   recordAgentResponse,
   recordFeedback,
@@ -39,6 +39,41 @@ function reactionSentiment(reaction: string): Sentiment | null {
   return null;
 }
 
+type ThreadReplies = {
+  messages?: { text?: string; user?: string; ts?: string; subtype?: string; bot_id?: string }[];
+  response_metadata?: { next_cursor?: string };
+};
+
+// First mention in a thread that started as user-to-user talk: import the discussion so far so
+// the bot doesn't referee an argument it never saw. Capped at the newest COMPACTION_THRESHOLD
+// human messages, so a giant pre-existing thread can never blow past the compaction contract.
+export async function backfillThread(
+  fetchReplies: (args: { channel: string; ts: string; limit?: number; cursor?: string }) => Promise<ThreadReplies>,
+  channel: string,
+  threadTs: string,
+  triggerTs: string,
+): Promise<void> {
+  let window: { text: string; user: string }[] = [];
+  let cursor: string | undefined;
+  for (let page = 0; page < 10; page++) {
+    const result = await fetchReplies({ channel, ts: threadTs, limit: 200, cursor });
+    const eligible = (result.messages ?? []).filter(
+      (m): m is { text: string; user: string; ts?: string } =>
+        typeof m.text === "string" && m.text.length > 0 && typeof m.user === "string" &&
+        !m.subtype && !m.bot_id && m.ts !== triggerTs,
+    );
+    window = [...window, ...eligible].slice(-COMPACTION_THRESHOLD);
+    cursor = result.response_metadata?.next_cursor;
+    if (!cursor) break;
+  }
+
+  for (const m of window) {
+    const content = normalizeUserInput(m.text);
+    if (!content) continue;
+    appendThreadMessage(channel, threadTs, { role: "user", content, author: m.user });
+  }
+}
+
 async function handleUserQuestion(args: {
   channel: string;
   threadTs?: string;
@@ -53,6 +88,12 @@ async function handleUserQuestion(args: {
     chat: {
       postMessage: (args: { channel: string; thread_ts?: string; text: string }) => Promise<{ ts?: string }>;
       update: (args: { channel: string; ts: string; text: string }) => Promise<unknown>;
+    };
+    conversations: {
+      replies: (args: { channel: string; ts: string; limit?: number; cursor?: string }) => Promise<{
+        messages?: { text?: string; user?: string; ts?: string; subtype?: string; bot_id?: string }[];
+        response_metadata?: { next_cursor?: string };
+      }>;
     };
   };
   messageTs: string;
@@ -97,11 +138,18 @@ async function handleUserQuestion(args: {
     await client.reactions.add({ channel, timestamp: messageTs, name }).catch(() => undefined);
   };
 
-  const history = toAgentMessages(getThreadState(channel, conversationTs));
-  appendThreadMessage(channel, conversationTs, { role: "user", content: question });
+  let state = getThreadState(channel, conversationTs);
+  if (threadTs && !state.summary && state.messages.length === 0) {
+    await backfillThread(client.conversations.replies, channel, conversationTs, messageTs).catch(
+      (error) => console.error("Thread backfill failed:", error),
+    );
+    state = getThreadState(channel, conversationTs);
+  }
+  const history = toAgentMessages(state);
+  appendThreadMessage(channel, conversationTs, { role: "user", content: question, author: userId });
 
   try {
-    const messages = [...history, { role: "user" as const, content: question }];
+    const messages = [...history, { role: "user" as const, content: `@${userId}: ${question}` }];
     const answer = escapeBroadcasts(
       await askAgent(agent, messages, requestConfig({ userId, channel, threadTs: conversationTs })),
     );
@@ -135,24 +183,40 @@ export function registerSlackHandlers(app: App): void {
     });
   });
 
-  app.message(async ({ message, say, client }) => {
+  // Passive capture: replies in a thread the bot is already conversing in get stored as context
+  // so the next mention sees the discussion that happened in between. The bot only ever answers
+  // mentions (handled above); it never interjects into user-to-user talk.
+  app.message(async ({ message, context }) => {
     if (message.subtype || !("text" in message) || !message.text || !message.user) {
       return;
     }
-
-    // Continue multi-turn conversations inside an existing thread.
+    if ("bot_id" in message && message.bot_id) {
+      return;
+    }
     if (!message.thread_ts || message.thread_ts === message.ts) {
       return;
     }
+    // Mentions also fire app_mention; capturing them here too would store the question twice.
+    if (context.botUserId && message.text.includes(`<@${context.botUserId}>`)) {
+      return;
+    }
 
-    await handleUserQuestion({
-      channel: message.channel,
-      threadTs: message.thread_ts,
-      userId: message.user,
-      userText: message.text,
-      say,
-      client,
-      messageTs: message.ts,
+    const state = getThreadState(message.channel, message.thread_ts);
+    if (!state.summary && state.messages.length === 0) {
+      return;
+    }
+
+    const content = normalizeUserInput(message.text);
+    if (!content) {
+      return;
+    }
+
+    // Store only; no compaction here. DB writes are cheap, summarization is not — captured
+    // chatter gets folded in one pass the next time the bot is actually tagged.
+    appendThreadMessage(message.channel, message.thread_ts, {
+      role: "user",
+      content,
+      author: message.user,
     });
   });
 
