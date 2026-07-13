@@ -75,7 +75,7 @@ export interface QueryResult {
   ids: Record<string, string[]>;
 }
 
-// This functions as an allowlist --> this is intentionally a bit brittle
+// This functions as an allowlist of tables and columns the agent can interact with.
 const ENTITY_SCHEMA: Record<EntityName, { table: string; pk: string; columns: string[] }> = {
   customers: {
     table: "customers",
@@ -165,6 +165,29 @@ export interface EntitySchemaInfo {
   entity: EntityName;
   columns: string[];
   foreign_keys: { column: string; references: EntityName }[];
+  enum_values: Record<string, string[]>;
+}
+
+const ENUM_VALUE_CAP = 20;
+
+function sampleEnumValues(entity: EntityName): Record<string, string[]> {
+  const db = getDatabase();
+  const schema = ENTITY_SCHEMA[entity];
+  const result: Record<string, string[]> = {};
+  for (const column of schema.columns) {
+    if (column === schema.pk || FK_ENRICHMENT[column]) continue; // pk/FK ids: not enum-shaped, use foreign_keys instead
+    const rows = db
+      .prepare(`SELECT DISTINCT ${column} AS v FROM ${schema.table} WHERE ${column} IS NOT NULL LIMIT ?`)
+      .all(ENUM_VALUE_CAP + 1) as { v: unknown }[];
+    if (rows.length > 0 && rows.length <= ENUM_VALUE_CAP) {
+      result[column] = rows.map((r) => String(r.v)).sort((a, b) => {
+        const na = Number(a);
+        const nb = Number(b);
+        return !Number.isNaN(na) && !Number.isNaN(nb) ? na - nb : a.localeCompare(b);
+      });
+    }
+  }
+  return result;
 }
 
 export function describeEntity(entity: EntityName): EntitySchemaInfo {
@@ -175,7 +198,7 @@ export function describeEntity(entity: EntityName): EntitySchemaInfo {
   const foreign_keys = schema.columns
     .filter((c) => c !== schema.pk && FK_ENRICHMENT[c])
     .map((c) => ({ column: c, references: FK_ENRICHMENT[c]!.entity }));
-  return { entity, columns: schema.columns, foreign_keys };
+  return { entity, columns: schema.columns, foreign_keys, enum_values: sampleEnumValues(entity) };
 }
 
 export function describeEntities(entities: EntityName[]): EntitySchemaInfo[] {
@@ -421,7 +444,7 @@ export function queryEntities(args: QueryEntitiesArgs): QueryResult {
   sql += ` LIMIT ?`;
   const rows = db.prepare(sql).all(...params, limit) as Record<string, unknown>[];
   const enriched = args.distinct ? rows : enrichRows(args.entity, rows);
-  return { rows: enriched, ids: args.distinct ? {} : collectIds(args.entity, enriched) };
+  return { rows: enriched, ids: collectIds(args.entity, enriched) };
 }
 
 export const SEARCH_LIMIT_DEFAULT = 5;

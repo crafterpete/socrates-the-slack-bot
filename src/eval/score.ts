@@ -157,7 +157,7 @@ export function scoreRetrieval(gold: GroupedIds, pred: GroupedIds, modality: Ret
   return {
     scored: totalGold > 0,
     recall: totalGold ? totalCorrect / totalGold : 1,
-    precision: totalPred ? totalCorrect / totalPred : 1,
+    precision: totalPred ? totalCorrect / totalPred : totalGold === 0 ? 1 : 0,
     mrr: ranked ? (mrrCount ? mrrSum / mrrCount : 1) : null,
     perEntity,
   };

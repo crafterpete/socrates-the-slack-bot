@@ -25,7 +25,6 @@ As a result, we can see that the agent has relatively low precision with a lot o
 
 However, since we're fully empowering Claude Opus with free-form sql, the agent does obtain a reasonably high eval pass rate simply via brute force.
 
-
 Examples of brute force: 
 
 Queries need to rely on word matching and enumerating all possible relevant terms.
@@ -44,7 +43,3 @@ SELECT COUNT(*) AS cnt FROM artifacts_fts WHERE artifacts_fts MATCH 'runbook aut
 ```
 
 The FTS5 parser searched each word "runbook" and "automation" separately, resulting in a more expansive set. The better query would've been `MATCH '"runbook automation"'
-
-
-## eval-report-v1
-This eval report is designed to grade our agent with more granular sql tools.

@@ -104,12 +104,15 @@ export const databaseTools = [
   tool((args) => JSON.stringify(describeEntities(args.entities)), {
     name: "describe_entities",
     description:
-      "Look up the exact column names on one or more entities/tables in a single call, and which of " +
-      "those columns are foreign keys (and which entity each one points to). Pass every entity you're " +
-      "unsure about together rather than one call per entity, e.g. when checking a `group_by: { via, " +
-      "column }` hop, pass both the base entity and the entity `via` points to at once. Call this " +
-      "before guessing at column names for `filters`, `select`, `order_by`, or `group_by` on an entity " +
-      "you haven't already queried in this conversation.",
+      "Look up the exact column names on one or more entities/tables in a single call, which of " +
+      "those columns are foreign keys (and which entity each one points to), and, for columns with " +
+      "a small enough set of distinct values (e.g. account_health, industry, artifact_type), the " +
+      "exact real values themselves under `enum_values` — so a filter's `value` never has to be " +
+      "guessed (\"at_risk\" vs the real \"at risk\") or discovered the expensive way via a failed " +
+      "filter or a group_by probe. Pass every entity you're unsure about together rather than one " +
+      "call per entity, e.g. when checking a `group_by: { via, column }` hop, pass both the base " +
+      "entity and the entity `via` points to at once. Call this before guessing at column names or " +
+      "filter values on an entity you haven't already queried in this conversation.",
     schema: describeEntitiesSchema,
   }),
   tool((args) => JSON.stringify(queryEntities(args)), {

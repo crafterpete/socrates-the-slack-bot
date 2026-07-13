@@ -306,6 +306,42 @@ describe("describeEntity", () => {
   });
 });
 
+describe("describeEntity: enum_values", () => {
+  test("includes real values for a low-cardinality column", () => {
+    const { enum_values } = describeEntity("customers");
+    assert.deepEqual(enum_values.account_health, ["at risk", "expanding", "healthy", "recovering", "watch list"]);
+  });
+
+  test("excludes a high-cardinality free-text column", () => {
+    const { enum_values } = describeEntity("customers");
+    assert.equal(enum_values.notes, undefined);
+    assert.equal(enum_values.name, undefined);
+  });
+
+  test("excludes a dirty/high-cardinality enum-shaped column (implementations.status, ~33 variants)", () => {
+    const { enum_values } = describeEntity("implementations");
+    assert.equal(enum_values.status, undefined);
+  });
+
+  test("excludes the entity's own primary key even though every value is technically distinct", () => {
+    const { enum_values } = describeEntity("customers");
+    assert.equal(enum_values.customer_id, undefined);
+  });
+
+  test("excludes foreign-key columns even when their cardinality is low (use foreign_keys instead)", () => {
+    const { enum_values } = describeEntity("implementations");
+    assert.equal(enum_values.customer_id, undefined);
+    assert.equal(enum_values.product_id, undefined); // only 4 distinct product ids, but not enum-shaped
+  });
+
+  test("sorts numeric-looking values numerically, not lexicographically", () => {
+    const { enum_values } = describeEntity("customers");
+    const counts = enum_values.employee_count!.map(Number);
+    const sorted = [...counts].sort((a, b) => a - b);
+    assert.deepEqual(counts, sorted);
+  });
+});
+
 describe("describeEntities: batch", () => {
   test("describes multiple entities in one call, in the order requested", () => {
     const results = describeEntities(["implementations", "customers"]);

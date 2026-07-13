@@ -8,6 +8,8 @@ The agent has three parameterized tools for querying the database. No raw SQL, n
 
 Returns one or more entities' exact column names, plus which of those columns are foreign keys and what entity each one points to. Column names aren't otherwise enumerated anywhere the model can see ahead of time, so this is how the model confirms a column exists (for `filters`, `select`, `order_by`, `group_by`) instead of guessing and retrying off an error message. It's also how it discovers valid `via` hops before using cross-table `group_by`. Takes an array so the model can describe every entity it's unsure about in one call rather than spending a tool call per table.
 
+**`enum_values`.** For any column whose real, distinct values all fit within 20 (e.g. `account_health`, `industry`, `artifact_type`), the response includes the exact value set, sorted (numerically if the values are numeric). This is how the model gets a filter value's exact spelling/casing right on the first try instead of guessing (`"at_risk"` vs the real `"at risk"`) and burning a call discovering the truth. High-cardinality and free-text/JSON columns fall out of the cap naturally, no separate exclusion list needed. The entity's own id and any foreign-key column are excluded on purpose even if their cardinality is low, since a raw id list isn't meaningful without the related entity's names, use `foreign_keys` and a `via` hop or a follow-up `describe_entities` call instead.
+
 | Param | Notes |
 |---|---|
 | `entities` | Array of entity names, same list as `query_entities`. At least one required |
