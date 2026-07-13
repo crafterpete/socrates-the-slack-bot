@@ -9,7 +9,7 @@ See: @/eval_reports/final_eval_report.html
 Between v0 and our latest iteration, we've raised our recall (60% -> 80%), precision (42% -> 60%), and MRR (0.5 -> 0.8). Our semantic & complex query answers are also much more accurate (the deterministic tests were already performing well). We've reduced the number of tool calls required (none > 6 in our suite, even with parallel tool calling enabled). 
 
 The current agent architecture itself is fairly simplistic:
-![LangGraph ReAct agent loop](docs/agent-architecture.png)
+![LangGraph ReAct agent loop + connections](simplified-architecture.png)
 
 So what's next? Some things that I wish I got to, but ran out of time: 
 
@@ -166,7 +166,7 @@ For this V1, we'll focus on SQL search tooling, but I'd like to eventually expan
 
 First, I want to benchmark the agent armed with a generic `run_sql` tool to have a control-sample on how an agent performs with maximal tooling flexibility.
 
-The outputs for this first run are in `/eval_reports/v0`. I documented the notes from this run in `/eval_reports/README.md`.
+The outputs for this first run are in `/eval_reports/v0`. I documented the notes from this run in `/eval_reports/v0/evals-report0.md`.
 
 Our precision was interestingly quite low. One culprit is that the agent makes mistakes and retrieves more than required.
 ![v0 Eval report](eval_reports/v0/v0-precision.jpg)

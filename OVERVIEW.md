@@ -4,7 +4,9 @@ Socrates is a Slack Q&A bot grounded in a SQLite database of synthetic startup d
 
 ## Agent architecture
 
-![LangGraph ReAct agent loop](docs/agent-architecture.png)
+![LangGraph ReAct agent loop](simple-react-agent.png)
+![LangGraph ReAct agent loop + connections](simplified-architecture.png)
+
 
 The two graph nodes (`agent`, `tools`) and one conditional edge are the entire loop; everything else in the system either feeds it (Slack handler, thread memory) or consumes its output (answer delivery, feedback capture).
 
