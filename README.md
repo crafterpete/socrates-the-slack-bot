@@ -2,6 +2,10 @@
 
 Socrates is a Slack Q&A bot grounded in a SQLite database of synthetic startup data (customers, implementations, artifacts like call transcripts and support tickets, employees, competitors, products). You @-mention it in a channel, it figures out what you're asking, queries the database with a small set of purpose-built tools, and replies in-thread. It supports multi-turn conversations, compacts long threads so context doesn't bloat, and records 👍/👎 reactions as feedback for future evals.
 
+## Watch it in action
+
+![Recordings of socrates replying to queries](https://drive.google.com/drive/folders/1-96tcfa7sApV51Y0AJ4-kOAx9u-yOUX6?usp=sharing)
+
 ## Agent architecture
 
 ![LangGraph ReAct agent loop + connections](simplified-architecture.png)
